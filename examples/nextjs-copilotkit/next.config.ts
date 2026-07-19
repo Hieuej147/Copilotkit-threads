@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  transpilePackages: ["@threads/contracts", "@threads/client", "@threads/react"],
+  transpilePackages: ["@kiri_ikki/thread-contracts", "@kiri_ikki/thread-client", "@kiri_ikki/thread-react"],
 };
 
 export default nextConfig;

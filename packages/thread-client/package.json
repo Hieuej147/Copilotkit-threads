@@ -1,8 +1,12 @@
 {
-  "name": "@threads/client",
-  "version": "0.1.0",
+  "name": "@kiri_ikki/thread-client",
+  "version": "0.0.0",
   "private": false,
-  "publishConfig": { "access": "public" },
+  "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/Hieuej147/Copilotkit-threads.git", "directory": "packages/thread-client" },
+  "homepage": "https://github.com/Hieuej147/Copilotkit-threads#readme",
+  "bugs": { "url": "https://github.com/Hieuej147/Copilotkit-threads/issues" },
+  "publishConfig": { "access": "public", "provenance": true },
   "files": ["dist"],
   "type": "module",
   "main": "./dist/index.js",
@@ -14,6 +18,6 @@
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "node --import tsx --test tests/*.test.ts"
   },
-  "dependencies": { "@threads/contracts": "workspace:*" },
+  "dependencies": { "@kiri_ikki/thread-contracts": "workspace:*" },
   "devDependencies": { "@types/node": "22.19.1", "tsx": "4.20.6", "typescript": "5.9.3" }
 }

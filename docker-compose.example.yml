@@ -1,6 +1,6 @@
 services:
   langgraph-migrate:
-    build: { context: ., dockerfile: examples/langgraph-agent/Dockerfile }
+    image: copilotkit-threads-agent:dev
     environment:
       POSTGRES_URL: postgresql://agent:agent@postgres:5432/agent_threads
     command: ["/app/.venv/bin/python", "-m", "app.migrate"]
@@ -8,12 +8,13 @@ services:
       postgres: { condition: service_healthy }
 
   agent:
+    image: copilotkit-threads-agent:dev
     build: { context: ., dockerfile: examples/langgraph-agent/Dockerfile }
     environment:
       POSTGRES_URL: postgresql://agent:agent@postgres:5432/agent_threads
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?Set OPENAI_API_KEY in .env}
       CHAT_MODEL: ${CHAT_MODEL:-gpt-4.1-mini}
-    ports: ["8000:8000"]
+    ports: ["${AGENT_PORT:-8000}:8000"]
     depends_on:
       langgraph-migrate: { condition: service_completed_successfully }
 
@@ -24,12 +25,13 @@ services:
       agent: { condition: service_started }
 
   web:
+    image: copilotkit-threads-web:dev
     build:
       context: .
       dockerfile: examples/nextjs-copilotkit/Dockerfile
       args:
-        NEXT_PUBLIC_RUNTIME_URL: http://localhost:4000/api/copilotkit
-        NEXT_PUBLIC_THREAD_API_URL: http://localhost:4000
+        NEXT_PUBLIC_RUNTIME_URL: http://localhost:${RUNTIME_PORT:-4000}/api/copilotkit
+        NEXT_PUBLIC_THREAD_API_URL: http://localhost:${RUNTIME_PORT:-4000}
     ports: ["${WEB_PORT:-3000}:3000"]
     depends_on:
       runtime: { condition: service_healthy }

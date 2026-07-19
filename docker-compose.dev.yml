@@ -1,0 +1,18 @@
+x-runtime-dev: &runtime-dev
+  image: copilotkit-threads-runtime:dev
+
+services:
+  postgres-migrate:
+    <<: *runtime-dev
+
+  runtime:
+    <<: *runtime-dev
+    build:
+      context: .
+      dockerfile: apps/runtime/Dockerfile
+
+  title-worker:
+    <<: *runtime-dev
+
+  reconciler:
+    <<: *runtime-dev

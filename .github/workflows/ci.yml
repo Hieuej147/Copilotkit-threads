@@ -13,12 +13,18 @@ jobs:
       - uses: pnpm/action-setup@v4
         with: { version: 10.12.1 }
       - uses: actions/setup-node@v4
-        with: { node-version: 20.19.4, cache: pnpm }
+        with: { node-version: 22.14.0, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm typecheck
       - run: pnpm test
-      - run: docker compose -f docker-compose.yml -f docker-compose.example.yml config --quiet
+      - run: pnpm changeset status
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+      - run: uv sync --project examples/langgraph-agent --locked
+      - run: uv run --project examples/langgraph-agent ruff check examples/langgraph-agent
+      - run: uv run --project examples/langgraph-agent pytest examples/langgraph-agent/tests
+      - run: OPENAI_API_KEY=ci-placeholder docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.example.yml config --quiet
+      - run: OPENAI_API_KEY=ci-placeholder docker compose -f examples/consumer-starter/compose.yaml config --quiet
       - uses: azure/setup-helm@v4
       - run: helm dependency build infra/k8s/charts/thread-platform
       - run: helm lint infra/k8s/charts/thread-platform -f infra/k8s/charts/thread-platform/values-local.yaml

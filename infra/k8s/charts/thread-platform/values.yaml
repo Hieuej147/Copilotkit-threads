@@ -4,9 +4,10 @@ global:
   imagePullSecrets: []
 
 runtime:
-  image: { repository: copilotkit-threads-runtime, tag: latest, pullPolicy: IfNotPresent }
+  image: { repository: ghcr.io/hieuej147/copilotkit-threads-runtime, tag: "0.1.0", pullPolicy: IfNotPresent }
   replicas: 2
   port: 4000
+  telemetryDisabled: true
   existingSecret: ""
   corsOrigins: ["http://localhost:3000"]
   rateLimit: { requestsPerMinute: 120 }

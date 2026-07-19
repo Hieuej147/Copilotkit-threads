@@ -6,7 +6,7 @@ import {
   threadMessagePageSchema,
   threadPageSchema,
   threadSchema,
-} from "@threads/contracts";
+} from "@kiri_ikki/thread-contracts";
 import { z } from "zod";
 import { currentPrincipal } from "./auth.js";
 import { ThreadRepository, type PublishedThreadEvent } from "./repository.js";

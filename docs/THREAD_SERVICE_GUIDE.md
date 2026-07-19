@@ -84,14 +84,14 @@ Store the UUID plus tenant/user ownership, call the Thread API, and handle
 
 This keeps Prisma and product releases independent of thread infrastructure.
 
-### Option B: consume workspace packages
+### Option B: consume published UI packages
 
-Publish or copy these packages into the product monorepo:
+Install these packages from npm; do not copy Runtime source into the product:
 
 ```text
-@threads/contracts
-@threads/client
-@threads/react
+@kiri_ikki/thread-contracts
+@kiri_ikki/thread-client
+@kiri_ikki/thread-react
 ```
 
 The server still runs independently. These packages provide contracts and UI
@@ -104,7 +104,7 @@ and SSE updates:
 
 ```tsx
 import { CopilotKit } from "@copilotkit/react-core/v2";
-import { ThreadClient, useThreadManager } from "@threads/react";
+import { ThreadClient, useThreadManager } from "@kiri_ikki/thread-react";
 
 const client = new ThreadClient({
   baseUrl: "/agent-platform",
@@ -237,7 +237,7 @@ Full reference stack:
 
 ```bash
 cp .env.example .env
-docker compose -f docker-compose.yml -f docker-compose.example.yml up --build -d
+make demo-up
 docker compose -f docker-compose.yml -f docker-compose.example.yml ps
 docker compose -f docker-compose.yml -f docker-compose.example.yml logs -f runtime agent title-worker web
 # Only recent logs (avoids confusing errors from replaced containers):
@@ -247,7 +247,7 @@ docker compose -f docker-compose.yml -f docker-compose.example.yml logs --since=
 Core with an external local agent:
 
 ```bash
-AGENT_URL=http://host.docker.internal:8000/agent docker compose up --build -d
+AGENT_URL=http://host.docker.internal:8000/agent docker compose up -d
 ```
 
 Inspect PostgreSQL:

@@ -1,6 +1,6 @@
 "use client";
 
-import type { AgentThread } from "@threads/contracts";
+import type { AgentThread } from "@kiri_ikki/thread-contracts";
 import { Archive, LoaderCircle, MessageSquarePlus, MoreHorizontal, PanelLeft } from "lucide-react";
 import { memo, useEffect, useRef } from "react";
 

@@ -7,7 +7,7 @@ import {
   type ThreadEvent,
   type ThreadMessagePage,
   type ThreadPage,
-} from "@threads/contracts";
+} from "@kiri_ikki/thread-contracts";
 
 export type ThreadClientOptions = {
   baseUrl: string;

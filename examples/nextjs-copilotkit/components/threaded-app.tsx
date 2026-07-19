@@ -1,7 +1,7 @@
 "use client";
 
 import { CopilotKit } from "@copilotkit/react-core/v2";
-import { ThreadClient, useThreadManager } from "@threads/react";
+import { ThreadClient, useThreadManager } from "@kiri_ikki/thread-react";
 import { useCallback, useEffect, useRef } from "react";
 import { ChatPanel } from "./chat-panel";
 import { ThreadSidebar } from "./thread-sidebar";

@@ -10,6 +10,7 @@ data:
   AGENT_URL: {{ include "thread-platform.agentUrl" . | quote }}
   CORS_ORIGIN: {{ join "," .Values.runtime.corsOrigins | quote }}
   RATE_LIMIT_REQUESTS_PER_MINUTE: {{ .Values.runtime.rateLimit.requestsPerMinute | quote }}
+  COPILOTKIT_TELEMETRY_DISABLED: {{ .Values.runtime.telemetryDisabled | quote }}
   TITLE_JOB_MAX_ATTEMPTS: {{ .Values.titleWorker.maxAttempts | quote }}
   TITLE_JOB_CLAIM_IDLE_MS: {{ .Values.titleWorker.claimIdleMs | quote }}
   TITLE_BASE_URL: {{ .Values.titleWorker.baseUrl | quote }}

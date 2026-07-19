@@ -7,7 +7,46 @@ HTTP_PORT ?= 8080
 HTTPS_PORT ?= 8443
 CHART := infra/k8s/charts/thread-platform
 
-.PHONY: check-tools k3d-create images k3d-import helm-deps local-install local-up local-down local-status local-logs local-db helm-lint
+.PHONY: demo-up demo-check demo-logs demo-db demo-down demo-reset dev-up dev-check dev-logs dev-down check-tools k3d-create images k3d-import helm-deps local-install local-up local-down local-status local-logs local-db helm-lint
+
+demo-up:
+	docker compose -f docker-compose.yml -f docker-compose.example.yml up -d --build --wait
+	@$(MAKE) demo-check
+
+demo-check:
+	@docker compose -f docker-compose.yml -f docker-compose.example.yml ps
+	@docker compose -f docker-compose.yml -f docker-compose.example.yml exec -T runtime wget -qO- http://localhost:4000/ready >/dev/null
+	@docker compose -f docker-compose.yml -f docker-compose.example.yml exec -T runtime wget -qO- http://localhost:4000/api/copilotkit/info >/dev/null
+	@docker compose -f docker-compose.yml -f docker-compose.example.yml exec -T web wget -qO- http://localhost:3000 >/dev/null
+	@echo 'Demo ready on the configured WEB_PORT (default http://localhost:3000)'
+
+demo-logs:
+	docker compose -f docker-compose.yml -f docker-compose.example.yml logs --tail=200 -f
+
+demo-db:
+	docker compose -f docker-compose.yml -f docker-compose.example.yml exec postgres psql -U agent -d agent_threads
+
+demo-down:
+	docker compose -f docker-compose.yml -f docker-compose.example.yml down --remove-orphans
+
+demo-reset:
+	docker compose -f docker-compose.yml -f docker-compose.example.yml down --volumes --remove-orphans
+
+dev-up:
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.example.yml up -d --build --wait
+	@$(MAKE) dev-check
+
+dev-check:
+	@docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.example.yml ps
+	@docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.example.yml exec -T runtime wget -qO- http://localhost:4000/ready >/dev/null
+	@docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.example.yml exec -T web wget -qO- http://localhost:3000 >/dev/null
+	@echo 'Development demo ready on the configured WEB_PORT (default http://localhost:3000)'
+
+dev-logs:
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.example.yml logs --tail=200 -f
+
+dev-down:
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.example.yml down --remove-orphans
 
 check-tools:
 	@command -v docker >/dev/null
@@ -33,7 +72,7 @@ local-install: k3d-import helm-deps
 	kubectl create namespace $(NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
 	@test -n "$$OPENAI_API_KEY" || (echo 'OPENAI_API_KEY is required' >&2; exit 1)
 	kubectl -n $(NAMESPACE) create secret generic $(RELEASE)-model --from-literal=OPENAI_API_KEY="$$OPENAI_API_KEY" --from-literal=TITLE_API_KEY="$$OPENAI_API_KEY" --dry-run=client -o yaml | kubectl apply -f -
-	helm upgrade --install $(RELEASE) $(CHART) -n $(NAMESPACE) -f $(CHART)/values-local.yaml --set runtime.image.tag=local --set examples.agent.image.tag=local --set examples.web.image.tag=local --set examples.agent.existingSecret=$(RELEASE)-model --set titleWorker.existingSecret=$(RELEASE)-model --set-string 'runtime.corsOrigins[0]=http://threads.localhost:$(HTTP_PORT)' --wait --timeout 10m
+	helm upgrade --install $(RELEASE) $(CHART) -n $(NAMESPACE) -f $(CHART)/values-local.yaml --set runtime.image.repository=copilotkit-threads-runtime --set runtime.image.tag=local --set examples.agent.image.tag=local --set examples.web.image.tag=local --set examples.agent.existingSecret=$(RELEASE)-model --set titleWorker.existingSecret=$(RELEASE)-model --set-string 'runtime.corsOrigins[0]=http://threads.localhost:$(HTTP_PORT)' --wait --timeout 10m
 
 local-up: local-install
 	@echo 'Open http://threads.localhost:$(HTTP_PORT)'

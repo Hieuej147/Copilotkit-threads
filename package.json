@@ -2,17 +2,28 @@
   "name": "copilotkit-threads",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Hieuej147/Copilotkit-threads.git"
+  },
   "packageManager": "pnpm@10.12.1",
   "scripts": {
     "build": "pnpm --recursive build",
-    "dev": "pnpm --filter @threads/contracts build && pnpm --parallel --filter @threads/runtime dev",
-    "dev:example": "pnpm --filter @threads/contracts build && pnpm --filter @threads/client build && pnpm --parallel --filter @threads/runtime --filter @threads/example-nextjs dev",
-    "lint": "pnpm --filter @threads/contracts build && pnpm --filter @threads/client build && pnpm --filter @threads/react build && pnpm --recursive lint",
-    "test": "pnpm --filter @threads/contracts build && pnpm --filter @threads/client build && pnpm --filter @threads/react build && pnpm --recursive test",
-    "typecheck": "pnpm --filter @threads/contracts build && pnpm --filter @threads/client build && pnpm --filter @threads/react build && pnpm --recursive typecheck",
-    "db:migrate": "pnpm --filter @threads/runtime db:migrate"
+    "dev": "pnpm --filter @kiri_ikki/thread-contracts build && pnpm --parallel --filter @kiri_ikki/thread-runtime dev",
+    "dev:example": "pnpm --filter @kiri_ikki/thread-contracts build && pnpm --filter @kiri_ikki/thread-client build && pnpm --parallel --filter @kiri_ikki/thread-runtime --filter @kiri_ikki/example-nextjs dev",
+    "lint": "pnpm --filter @kiri_ikki/thread-contracts build && pnpm --filter @kiri_ikki/thread-client build && pnpm --filter @kiri_ikki/thread-react build && pnpm --recursive lint",
+    "test": "pnpm --filter @kiri_ikki/thread-contracts build && pnpm --filter @kiri_ikki/thread-client build && pnpm --filter @kiri_ikki/thread-react build && pnpm --recursive test",
+    "typecheck": "pnpm --filter @kiri_ikki/thread-contracts build && pnpm --filter @kiri_ikki/thread-client build && pnpm --filter @kiri_ikki/thread-react build && pnpm --recursive typecheck",
+    "db:migrate": "pnpm --filter @kiri_ikki/thread-runtime db:migrate",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "changeset publish"
   },
   "engines": {
     "node": ">=20.19"
+  },
+  "devDependencies": {
+    "@changesets/cli": "2.29.7"
   }
 }

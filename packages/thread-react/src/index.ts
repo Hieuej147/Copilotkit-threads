@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ThreadClient, type AgentThread, type ThreadEvent } from "@threads/client";
+import { ThreadClient, type AgentThread, type ThreadEvent } from "@kiri_ikki/thread-client";
 
 export type UseThreadManagerOptions = {
   client: ThreadClient;
@@ -142,4 +142,4 @@ export function useThreadManager({
 }
 
 export { ThreadClient };
-export type { AgentThread, ThreadEvent } from "@threads/client";
+export type { AgentThread, ThreadEvent } from "@kiri_ikki/thread-client";

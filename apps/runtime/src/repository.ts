@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import {
   type ThreadEvent,
   type ThreadEventType,
-} from "@threads/contracts";
+} from "@kiri_ikki/thread-contracts";
 import type {
   BeginRunInput,
   PersistedEvent,

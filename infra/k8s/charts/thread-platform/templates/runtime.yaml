@@ -42,7 +42,7 @@ spec:
               valueFrom: { secretKeyRef: { name: {{ include "thread-platform.connectionsSecret" . }}, key: {{ ternary "postgres-url" .Values.externalDatabase.urlKey .Values.postgresql.enabled }} } }
             - name: REDIS_URL
               valueFrom: { secretKeyRef: { name: {{ include "thread-platform.redisSecret" . }}, key: {{ ternary "redis-url" .Values.externalRedis.urlKey .Values.redis.enabled }} } }
-          readinessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 5, periodSeconds: 10 }
+          readinessProbe: { httpGet: { path: /ready, port: http }, initialDelaySeconds: 5, periodSeconds: 10 }
           livenessProbe: { httpGet: { path: /live, port: http }, initialDelaySeconds: 10, periodSeconds: 20 }
           startupProbe: { httpGet: { path: /live, port: http }, failureThreshold: 30, periodSeconds: 5 }
           lifecycle: { preStop: { exec: { command: ["sh", "-c", "sleep 10"] } } }
