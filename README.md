@@ -20,6 +20,12 @@ Open `http://localhost:3000`. `make demo-up` pulls the versioned Thread Runtime
 from GHCR and builds only the example agent and UI. Use `WEB_PORT=3001` in
 `.env` when port 3000 is occupied.
 
+The maintainer UI also includes a collapsible
+[CopilotKit Hooks Compatibility Lab](examples/nextjs-copilotkit/README.md) that
+tests React v2 agent, context, suggestion, tool-rendering and HITL hooks while
+continuing to use the self-hosted `useThreadManager` instead of CopilotKit
+Cloud threads.
+
 Until the first GHCR release exists, repository maintainers use `make dev-up`
 to build Runtime from the current checkout.
 

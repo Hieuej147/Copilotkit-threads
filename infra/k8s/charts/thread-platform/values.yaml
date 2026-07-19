@@ -37,6 +37,7 @@ reconciler:
   enabled: true
   schedule: "*/5 * * * *"
   staleAfterSeconds: 600
+  deletedThreadRetentionDays: 30
 
 auth:
   mode: gateway

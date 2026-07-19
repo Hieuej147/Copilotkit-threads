@@ -41,6 +41,7 @@ services:
       AGENT_URL: ${AGENT_URL:-http://host.docker.internal:8000/agent}
       AGENT_NAMESPACE: ${AGENT_NAMESPACE:-starter}
       AGENT_ID: ${AGENT_ID:-default}
+      DELETED_THREAD_RETENTION_DAYS: ${DELETED_THREAD_RETENTION_DAYS:-30}
       CORS_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
       COPILOTKIT_TELEMETRY_DISABLED: ${COPILOTKIT_TELEMETRY_DISABLED:-true}
       AUTH_MODE: ${AUTH_MODE:-development}
@@ -82,6 +83,7 @@ services:
       REDIS_URL: redis://redis:6379
       AGENT_NAMESPACE: ${AGENT_NAMESPACE:-starter}
       AGENT_ID: ${AGENT_ID:-default}
+      DELETED_THREAD_RETENTION_DAYS: ${DELETED_THREAD_RETENTION_DAYS:-30}
     depends_on:
       postgres-migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }

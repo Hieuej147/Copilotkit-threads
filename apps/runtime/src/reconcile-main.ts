@@ -25,6 +25,7 @@ try {
     repository.pruneTitleJobs(config.EVENT_RETENTION_DAYS),
     repository.pruneThreadEvents(config.EVENT_RETENTION_DAYS),
   ]);
+  const purgedThreads = await repository.purgeDeletedThreads(config.DELETED_THREAD_RETENTION_DAYS);
   console.log(JSON.stringify({
     level: "info",
     message: "run_reconciliation_complete",
@@ -33,6 +34,7 @@ try {
     prunedEvents,
     prunedTitleJobs,
     prunedThreadEvents,
+    purgedThreads,
   }));
 } finally {
   await Promise.all([pool.end(), redis.quit()]);

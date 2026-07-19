@@ -192,8 +192,13 @@ Base path is `/v2`. Full schemas are in `docs/openapi.yaml`.
 | PATCH | `/threads/{id}` | manual title rename |
 | POST | `/threads/{id}/archive` | archive |
 | POST | `/threads/{id}/unarchive` | restore |
-| DELETE | `/threads/{id}` | soft delete |
+| DELETE | `/threads/{id}` | soft delete, then retention-based physical purge |
 | GET | `/thread-events` | authenticated SSE with `Last-Event-ID` replay |
+
+Archive and delete are intentionally different. Archive sets `status='archived'`
+and is reversible through `/unarchive`; the maintainer UI's box icon performs
+this action. Delete sets `status='deleted'`, has no public restore endpoint and
+enters the physical-purge lifecycle described in section 11.
 
 One run is allowed per thread. Different threads can run concurrently, including
 multiple threads owned by the same user. A second run on the same thread receives
@@ -353,6 +358,22 @@ reconciler after lock loss.
 `EVENT_RETENTION_DAYS` controls durable sidebar event pruning. It does not delete
 threads/messages. `REDIS_STREAM_TTL_SECONDS` controls transient AG-UI live stream
 retention; PostgreSQL still stores complete run events for reconnect.
+
+`DELETE /v2/threads/{id}` immediately hides a thread by setting
+`status='deleted'` and `deleted_at`. The reconciler physically removes the core
+thread, runs, messages and events after `DELETED_THREAD_RETENTION_DAYS` (30 by
+default, 0 means the next reconciler run). In the bundled same-database topology
+it also removes rows from LangGraph's `checkpoints`, `checkpoint_blobs` and
+`checkpoint_writes` tables. If the product agent stores checkpoints or long-term
+memory in another database, that agent owns an equivalent deletion workflow;
+the Runtime cannot purge an external store.
+
+The Helm chart schedules the reconciler as a CronJob. Docker Compose does not
+provide a scheduler; invoke it from cron/systemd at least every five minutes:
+
+```bash
+docker compose --profile maintenance run --rm reconciler
+```
 
 ## 12. Troubleshooting
 

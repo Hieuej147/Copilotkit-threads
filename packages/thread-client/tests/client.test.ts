@@ -49,4 +49,38 @@ describe("ThreadClient", () => {
     await client.create({ requestId });
     assert.equal(JSON.parse(requestBody).requestId, requestId);
   });
+
+  it("preserves the receiver of a caller-provided fetch implementation", async () => {
+    const transport = {
+      calls: 0,
+      fetch(this: { calls: number }): Promise<Response> {
+        this.calls += 1;
+        return Promise.resolve(new Response(JSON.stringify({ items: [], nextCursor: null, eventCursor: "0" })));
+      },
+    };
+    const customFetch = transport.fetch.bind(transport) as typeof globalThis.fetch;
+
+    const client = new ThreadClient({
+      baseUrl: "https://threads.example",
+      fetch: customFetch,
+    });
+    const page = await client.list();
+    assert.deepEqual(page.items, []);
+    assert.equal(transport.calls, 1);
+  });
+
+  it("binds native-style global fetch when no implementation is provided", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = function nativeStyleFetch(this: typeof globalThis): Promise<Response> {
+      assert.equal(this, globalThis);
+      return Promise.resolve(new Response(JSON.stringify({ items: [], nextCursor: null, eventCursor: "0" })));
+    } as typeof globalThis.fetch;
+    try {
+      const client = new ThreadClient({ baseUrl: "https://threads.example" });
+      const page = await client.list();
+      assert.deepEqual(page.items, []);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

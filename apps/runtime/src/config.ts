@@ -13,6 +13,7 @@ const schema = z.object({
   RUNTIME_PORT: z.coerce.number().int().positive().default(4000),
   CORS_ORIGIN: z.string().default("http://localhost:3000"),
   EVENT_RETENTION_DAYS: z.coerce.number().int().positive().default(7),
+  DELETED_THREAD_RETENTION_DAYS: z.coerce.number().int().nonnegative().default(30),
   REDIS_STREAM_TTL_SECONDS: z.coerce.number().int().positive().default(86400),
   THREAD_LOCK_TTL_SECONDS: z.coerce.number().int().min(30).max(3600).default(120),
   TITLE_JOB_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),

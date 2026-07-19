@@ -46,7 +46,7 @@ export class ThreadClient {
 
   constructor(private readonly options: ThreadClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
-    this.requestFetch = options.fetch ?? globalThis.fetch;
+    this.requestFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
   }
 
   create(options: CreateThreadOptions = {}): Promise<AgentThread> {

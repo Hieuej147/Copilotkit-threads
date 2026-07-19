@@ -64,8 +64,8 @@ paths:
       responses:
         "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/Thread" } } } }
     delete:
-      summary: Soft-delete a thread
-      responses: { "204": { description: Deleted } }
+      summary: Soft-delete a thread pending retention-based purge
+      responses: { "204": { description: Hidden immediately; physically purged after configured retention } }
   /threads/{threadId}/messages:
     parameters:
       - { in: path, name: threadId, required: true, schema: { type: string, format: uuid } }

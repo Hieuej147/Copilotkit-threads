@@ -1,33 +1,110 @@
 from __future__ import annotations
 
-from langchain_core.messages import BaseMessage, SystemMessage
+import json
+from typing import Annotated, Any, TypedDict
+
+from langchain_core.messages import (
+    AIMessage,
+    AnyMessage,
+    SystemMessage,
+    ToolMessage,
+)
+from langgraph.graph.message import add_messages
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from langgraph.graph import START, MessagesState, StateGraph
-from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.graph import END, START, StateGraph
+from langgraph.prebuilt import ToolNode
 
 from .config import settings
 from .tools import TOOLS
 
 
-class AgentState(MessagesState):
-    pass
+AgentState = TypedDict(
+    "AgentState",
+    {
+        "messages": Annotated[list[AnyMessage], add_messages],
+        "tools": list[dict[str, Any]],
+        "copilotkit": dict[str, Any],
+        "ag-ui": dict[str, Any],
+    },
+    total=False,
+)
 
 
 def chat_model() -> ChatOpenAI:
     return ChatOpenAI(model=settings.chat_model, temperature=0.2)
 
 
-async def chat_node(state: AgentState) -> dict[str, list[BaseMessage]]:
+def repair_orphan_tool_calls(messages: list[AnyMessage]) -> list[AnyMessage]:
+    """Make checkpoint history valid after a frontend tool run is abandoned."""
+    repaired: list[AnyMessage] = []
+    for index, message in enumerate(messages):
+        repaired.append(message)
+        if not isinstance(message, AIMessage) or not message.tool_calls:
+            continue
+
+        answered_ids: set[str] = set()
+        cursor = index + 1
+        while cursor < len(messages) and isinstance(messages[cursor], ToolMessage):
+            answered_ids.add(messages[cursor].tool_call_id)
+            cursor += 1
+
+        for call in message.tool_calls:
+            call_id = call.get("id")
+            if call_id and call_id not in answered_ids:
+                repaired.append(
+                    ToolMessage(
+                        content="Tool execution was interrupted before completion.",
+                        tool_call_id=call_id,
+                    )
+                )
+    return repaired
+
+
+def json_safe(value: Any) -> Any:
+    if hasattr(value, "model_dump"):
+        return json_safe(value.model_dump(mode="json"))
+    if isinstance(value, dict):
+        return {str(key): json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(item) for item in value]
+    return value
+
+
+async def chat_node(state: AgentState) -> dict[str, Any]:
+    frontend_tools = state.get("tools", [])
+    ag_ui_state = json_safe(state.get("ag-ui", {}))
+    context = state.get("copilotkit", {}).get("context", [])
+    if not context:
+        context = ag_ui_state.get("context", [])
     system = SystemMessage(
         content=(
             "You are a helpful production assistant. Answer the user's request clearly. "
-            "Use request_purchase whenever the user asks to buy or purchase something. "
-            "Do not discuss internal thread storage or title generation unless asked."
+            "Use exactly one relevant tool at a time. Use get_weather for weather, "
+            "get_demo_server_time for demo server time, and request_purchase for purchases. "
+            "When available, use show_demo_profile to display a requested demo profile, "
+            "set_demo_accent to change the demo accent, and confirm_demo_export before a demo export. "
+            "Do not discuss internal thread storage or title generation unless asked. "
+            f"Current application context: {json.dumps(context, ensure_ascii=False, default=str)}"
         )
     )
-    response = await chat_model().bind_tools(TOOLS).ainvoke([system, *state["messages"]])
-    return {"messages": [response]}
+    messages = repair_orphan_tool_calls(state["messages"])
+    response = await chat_model().bind_tools([*TOOLS, *frontend_tools]).ainvoke(
+        [system, *messages]
+    )
+    return {"messages": [response], "ag-ui": ag_ui_state}
+
+
+def route_after_chat(state: AgentState) -> str:
+    last_message = state["messages"][-1]
+    if not isinstance(last_message, AIMessage) or not last_message.tool_calls:
+        return END
+    backend_names = {tool.name for tool in TOOLS}
+    if all(call.get("name") in backend_names for call in last_message.tool_calls):
+        return "tools"
+    # Frontend tools execute in CopilotKit after this graph run finishes. Their
+    # result starts a follow-up run with the matching ToolMessage.
+    return END
 
 
 def build_graph(checkpointer: AsyncPostgresSaver):
@@ -35,6 +112,6 @@ def build_graph(checkpointer: AsyncPostgresSaver):
     builder.add_node("chat", chat_node)
     builder.add_node("tools", ToolNode(TOOLS))
     builder.add_edge(START, "chat")
-    builder.add_conditional_edges("chat", tools_condition)
+    builder.add_conditional_edges("chat", route_after_chat, {"tools": "tools", END: END})
     builder.add_edge("tools", "chat")
     return builder.compile(checkpointer=checkpointer)

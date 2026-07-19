@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from langchain_core.tools import tool
 from langgraph.types import interrupt
 
@@ -50,6 +52,15 @@ def get_weather(location: str) -> dict[str, str | int | bool]:
 
 
 @tool
+def get_demo_server_time() -> dict[str, str]:
+    """Get the current UTC time from the demo agent server."""
+    return {
+        "timezone": "UTC",
+        "isoTime": datetime.now(UTC).isoformat(),
+    }
+
+
+@tool
 def request_purchase(item: str, amount_usd: float) -> dict[str, str | float | bool]:
     """Request human approval before purchasing an item. Always use this before a purchase."""
     decision = interrupt({
@@ -67,4 +78,4 @@ def request_purchase(item: str, amount_usd: float) -> dict[str, str | float | bo
     }
 
 
-TOOLS = [get_weather, request_purchase]
+TOOLS = [get_weather, get_demo_server_time, request_purchase]

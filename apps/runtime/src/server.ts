@@ -14,6 +14,7 @@ import { createThreadApi } from "./http-api.js";
 import { ThreadRepository } from "./repository.js";
 import { createPrincipalMiddleware } from "./auth.js";
 import { createRateLimitMiddleware } from "./rate-limit.js";
+import { isAgentTransportDisconnect } from "./transport-error.js";
 
 const config = loadConfig();
 const pool = createPool(config.POSTGRES_URL);
@@ -129,7 +130,7 @@ const server = app.listen(config.RUNTIME_PORT, () => {
   console.log(`Runtime listening on http://localhost:${config.RUNTIME_PORT}`);
 });
 
-async function shutdown(signal: string): Promise<void> {
+async function shutdown(signal: string, exitCode = 0): Promise<void> {
   console.log(`Received ${signal}; shutting down`);
   const drained = new Promise<void>((resolve) => server.close(() => resolve()));
   await runner.shutdown();
@@ -139,8 +140,24 @@ async function shutdown(signal: string): Promise<void> {
   ]);
   server.closeAllConnections();
   await Promise.all([pool.end(), redis.quit()]);
-  process.exit(0);
+  process.exit(exitCode);
 }
 
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 process.on("SIGINT", () => void shutdown("SIGINT"));
+process.on("unhandledRejection", (reason) => {
+  if (isAgentTransportDisconnect(reason)) {
+    console.warn(JSON.stringify({
+      level: "warn",
+      message: "agent_transport_disconnected",
+      error: reason instanceof Error ? reason.message : String(reason),
+    }));
+    return;
+  }
+  console.error(JSON.stringify({
+    level: "fatal",
+    message: "unhandled_rejection",
+    error: reason instanceof Error ? reason.message : String(reason),
+  }));
+  void shutdown("UNHANDLED_REJECTION", 1);
+});

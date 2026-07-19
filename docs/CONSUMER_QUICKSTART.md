@@ -58,7 +58,8 @@ services:
 
 Run the same image once with
 `node apps/runtime/dist/migrate.js`, continuously with
-`node apps/runtime/dist/title-worker-main.js`, and normally for Runtime. One
+`node apps/runtime/dist/title-worker-main.js`, normally for Runtime, and on a
+five-minute schedule with `node apps/runtime/dist/reconcile-main.js`. One
 PostgreSQL database is sufficient: core tables live in `agent_core`; LangGraph
 owns its checkpoint tables.
 
@@ -117,6 +118,10 @@ CopilotChat, so the product must not reconstruct chat messages manually.
 - Put product relations in product tables as UUID references. Do not add core
   tables to Prisma's migration ownership.
 - Configure exact CORS origins, TLS, managed PostgreSQL backups and monitoring.
+- Choose `DELETED_THREAD_RETENTION_DAYS` explicitly. Delete is hidden
+  immediately and physically purged by the reconciler after that window. When
+  the agent uses an external checkpoint or memory store, purge the same thread
+  ID there from the product's deletion workflow.
 
 See [Thread Platform Handbook](THREAD_SERVICE_GUIDE.md) for all environment
 variables, SQL inspection, Helm deployment and operational failure modes.

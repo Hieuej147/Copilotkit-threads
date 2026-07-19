@@ -17,6 +17,7 @@ data:
   TITLE_MODEL: {{ .Values.titleWorker.model | quote }}
   TITLE_TIMEOUT_MS: {{ .Values.titleWorker.timeoutMs | quote }}
   RUN_STALE_AFTER_SECONDS: {{ .Values.reconciler.staleAfterSeconds | quote }}
+  DELETED_THREAD_RETENTION_DAYS: {{ .Values.reconciler.deletedThreadRetentionDays | quote }}
   AUTH_MODE: {{ .Values.auth.mode | quote }}
   AUTH_TENANT_HEADER: {{ .Values.auth.tenantHeader | quote }}
   AUTH_USER_HEADER: {{ .Values.auth.userHeader | quote }}

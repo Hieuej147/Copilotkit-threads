@@ -6,7 +6,7 @@ import { memo, useEffect, useRef } from "react";
 
 interface Props {
   threads: AgentThread[];
-  activeId: string;
+  activeId: string | null;
   onSelect: (id: string) => void;
   onCreate: () => void;
   onArchive: (id: string) => void;

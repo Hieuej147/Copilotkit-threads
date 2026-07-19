@@ -779,6 +779,57 @@ export class ThreadRepository {
     return result.rowCount ?? 0;
   }
 
+  async purgeDeletedThreads(retentionDays: number, batchSize = 1_000): Promise<number> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const candidates = await client.query<{ id: string }>(
+        `SELECT t.id
+         FROM agent_core.agent_threads t
+         WHERE t.namespace = $1 AND t.status = 'deleted'
+           AND t.deleted_at <= now() - make_interval(days => $2)
+           AND NOT EXISTS (
+             SELECT 1 FROM agent_core.agent_runs r
+             WHERE r.thread_id = t.id AND r.status IN ('queued', 'running')
+           )
+         ORDER BY t.deleted_at, t.id
+         LIMIT $3
+         FOR UPDATE SKIP LOCKED`,
+        [this.namespace, retentionDays, batchSize],
+      );
+      const ids = candidates.rows.map((row) => row.id);
+      if (!ids.length) {
+        await client.query("COMMIT");
+        return 0;
+      }
+
+      // The bundled LangGraph example shares this database. These tables are
+      // optional because consumers may keep checkpoints in a separate store.
+      for (const table of ["checkpoint_writes", "checkpoint_blobs", "checkpoints"] as const) {
+        const exists = await client.query<{ relation: string | null }>(
+          "SELECT to_regclass($1) AS relation",
+          [`public.${table}`],
+        );
+        if (exists.rows[0]?.relation) {
+          await client.query(`DELETE FROM public.${table} WHERE thread_id = ANY($1::text[])`, [ids]);
+        }
+      }
+
+      const removed = await client.query(
+        `DELETE FROM agent_core.agent_threads
+         WHERE namespace = $1 AND id = ANY($2::uuid[]) AND status = 'deleted'`,
+        [this.namespace, ids],
+      );
+      await client.query("COMMIT");
+      return removed.rowCount ?? 0;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async operationalMetrics(): Promise<OperationalMetrics> {
     const result = await this.pool.query<{
       active_runs: string;

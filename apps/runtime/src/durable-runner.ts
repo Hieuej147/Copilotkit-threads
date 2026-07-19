@@ -74,9 +74,40 @@ export function createEventNormalizer(): (event: BaseEvent) => BaseEvent | null 
       started.delete(id);
       completed.add(id);
     }
-    if (repaired.type === "RUN_FINISHED") runFinished = true;
+    if (repaired.type === "RUN_FINISHED" || repaired.type === "RUN_ERROR") runFinished = true;
     return repaired;
   };
+}
+
+export function createThreadEventNormalizer(): (key: string, event: BaseEvent) => BaseEvent | null {
+  const normalizers = new Map<string, ReturnType<typeof createEventNormalizer>>();
+  return (key, event) => {
+    const separator = key.indexOf(":");
+    const runId = separator >= 0 ? key.slice(0, separator) : key;
+    let normalize = normalizers.get(runId);
+    if (!normalize) {
+      normalize = createEventNormalizer();
+      normalizers.set(runId, normalize);
+    }
+    return normalize(event);
+  };
+}
+
+function normalizeError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+function runErrorEvent(error: Error): BaseEvent {
+  return {
+    type: "RUN_ERROR",
+    message: error.message || "Agent run failed",
+  } as BaseEvent;
+}
+
+export function createBlockingStreamReader(redis: Redis): Redis {
+  // Blocking Redis commands monopolize their connection. Keep XREAD off the
+  // command connection used for locks, heartbeats, and event publication.
+  return redis.duplicate({ maxRetriesPerRequest: null });
 }
 
 export class DurableAgentRunner extends AgentRunner {
@@ -105,7 +136,17 @@ export class DurableAgentRunner extends AgentRunner {
   run(request: AgentRunnerRunRequest): Observable<BaseEvent> {
     const subject = new ReplaySubject<BaseEvent>();
     const principal = currentPrincipal();
-    void this.startRun(request, subject, principal);
+    void this.startRun(request, subject, principal).catch((error: unknown) => {
+      const normalized = normalizeError(error);
+      console.error(JSON.stringify({
+        level: "error",
+        message: "agent_run_start_failed",
+        threadId: request.threadId,
+        error: normalized.message,
+      }));
+      subject.next(runErrorEvent(normalized));
+      subject.complete();
+    });
     return subject.asObservable();
   }
 
@@ -124,7 +165,8 @@ export class DurableAgentRunner extends AgentRunner {
       "NX",
     );
     if (!acquired) {
-      subject.error(new Error("THREAD_BUSY"));
+      subject.next(runErrorEvent(new Error("THREAD_BUSY")));
+      subject.complete();
       return;
     }
 
@@ -151,6 +193,7 @@ export class DurableAgentRunner extends AgentRunner {
       const normalizeEvent = createEventNormalizer();
       let writeChain = Promise.resolve();
       let terminal = false;
+      let terminalEventPublished = false;
       let finalizePromise: Promise<void> | null = null;
 
       const finalize = (
@@ -160,20 +203,39 @@ export class DurableAgentRunner extends AgentRunner {
         if (finalizePromise) return finalizePromise;
         terminal = true;
         finalizePromise = (async () => {
+          let terminalError = error;
           try {
             await writeChain;
-          } catch {
-            // The original persistence error is reported through `error`.
+            await this.repository.finishRun(runId, status, error);
+            await this.releaseLock(threadId, token);
+          } catch (failure) {
+            terminalError ??= normalizeError(failure);
+            console.error(JSON.stringify({
+              level: "error",
+              message: "agent_run_finalize_failed",
+              threadId,
+              runId,
+              error: terminalError.message,
+            }));
+            try {
+              await this.releaseLock(threadId, token);
+            } catch {
+              // Lock TTL is the final fallback when Redis is unavailable.
+            }
+          } finally {
+            const active = this.activeRuns.get(threadId);
+            if (active?.token === token) {
+              clearInterval(active.heartbeat);
+              this.activeRuns.delete(threadId);
+            }
           }
-          await this.repository.finishRun(runId, status, error);
-          await this.releaseLock(threadId, token);
-          const active = this.activeRuns.get(threadId);
-          if (active?.token === token) {
-            clearInterval(active.heartbeat);
-            this.activeRuns.delete(threadId);
+
+          if ((status !== "completed" || terminalError) && !terminalEventPublished) {
+            subject.next(runErrorEvent(terminalError ?? new Error(
+              status === "cancelled" ? "RUN_CANCELLED" : "RUN_FAILED",
+            )));
           }
-          if (status === "completed") subject.complete();
-          else subject.error(error ?? new Error(status === "cancelled" ? "RUN_CANCELLED" : "RUN_FAILED"));
+          subject.complete();
         })();
         return finalizePromise;
       };
@@ -192,9 +254,12 @@ export class DurableAgentRunner extends AgentRunner {
             );
             await this.redis.expire(this.streamKey(threadId), this.config.REDIS_STREAM_TTL_SECONDS);
             subject.next(event);
+            if (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR") {
+              terminalEventPublished = true;
+            }
           });
         void writeChain.catch((failure: unknown) => {
-          const normalized = failure instanceof Error ? failure : new Error(String(failure));
+          const normalized = normalizeError(failure);
           agent.abortRun();
           void finalize("failed", normalized);
         });
@@ -222,36 +287,42 @@ export class DurableAgentRunner extends AgentRunner {
           publishEvent(normalizedEvent);
         },
         error: (error: unknown) => {
-          const normalized = error instanceof Error ? error : new Error(String(error));
+          const normalized = normalizeError(error);
           void finalize("failed", normalized);
         },
         complete: () => {
-          void finalize("completed").catch((error: unknown) => subject.error(error));
+          void finalize("completed");
         },
       });
       if (this.activeRuns.get(threadId)?.token === token) active.subscription = subscription;
       else subscription.unsubscribe();
     } catch (error) {
-      await this.releaseLock(threadId, token);
-      subject.error(error);
+      try {
+        await this.releaseLock(threadId, token);
+      } catch {
+        // Lock TTL is the final fallback when Redis is unavailable.
+      }
+      subject.next(runErrorEvent(normalizeError(error)));
+      subject.complete();
     }
   }
 
   connect(request: AgentRunnerConnectRequest): Observable<BaseEvent> {
     return new Observable<BaseEvent>((subscriber) => {
       let stopped = false;
+      const streamReader = createBlockingStreamReader(this.redis);
       void (async () => {
         if (!await this.repository.getThread(request.threadId)) throw new Error("THREAD_NOT_FOUND");
         const streamKey = this.streamKey(request.threadId);
         const boundary = await this.redis.xrevrange(streamKey, "+", "-", "COUNT", 1);
         let redisCursor = boundary[0]?.[0] ?? "0-0";
         const persisted = await this.repository.loadEvents(request.threadId);
-        const normalizeEvent = createEventNormalizer();
+        const normalizeEvent = createThreadEventNormalizer();
         const seen = new Set(persisted.map((item) => item.key));
         const finishedRuns = new Set<string>();
         for (const item of persisted) {
           if (stopped) return;
-          const event = normalizeEvent(item.event);
+          const event = normalizeEvent(item.key, item.event);
           if (!event) continue;
           const runId = item.key.split(":", 1)[0] ?? item.key;
           if (event.type === "RUN_FINISHED") finishedRuns.add(runId);
@@ -260,7 +331,7 @@ export class DurableAgentRunner extends AgentRunner {
         }
 
         while (!stopped) {
-          const xread = this.redis.xread.bind(this.redis) as (...args: Array<string | number>) => Promise<
+          const xread = streamReader.xread.bind(streamReader) as (...args: Array<string | number>) => Promise<
             Array<[string, Array<[string, string[]]>]> | null
           >;
           const batches = await xread(
@@ -284,7 +355,7 @@ export class DurableAgentRunner extends AgentRunner {
                 );
                 if (!values.key || !values.event || seen.has(values.key)) continue;
                 seen.add(values.key);
-                const event = normalizeEvent(JSON.parse(values.event) as BaseEvent);
+                const event = normalizeEvent(values.key, JSON.parse(values.event) as BaseEvent);
                 if (!event) continue;
                 const runId = values.key.split(":", 1)[0] ?? values.key;
                 if (event.type === "RUN_FINISHED") finishedRuns.add(runId);
@@ -298,9 +369,12 @@ export class DurableAgentRunner extends AgentRunner {
             return;
           }
         }
-      })().catch((error: unknown) => subscriber.error(error));
+      })().catch((error: unknown) => {
+        if (!stopped) subscriber.error(error);
+      });
       return () => {
         stopped = true;
+        streamReader.disconnect();
       };
     });
   }
