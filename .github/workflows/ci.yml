@@ -20,7 +20,11 @@ jobs:
       - run: pnpm build
       - run: pnpm typecheck
       - run: pnpm test
-      - run: pnpm changeset status
+      - name: Prepare Changesets base branch
+        run: git show-ref --verify --quiet refs/heads/main || git branch main origin/main
+      - name: Check changesets
+        if: github.event_name != 'pull_request' || github.head_ref != 'changeset-release/main'
+        run: pnpm changeset status
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
       - run: uv sync --project examples/langgraph-agent --locked
       - run: uv run --project examples/langgraph-agent ruff check examples/langgraph-agent
