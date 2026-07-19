@@ -1,5 +1,12 @@
 # @kiri_ikki/thread-react
 
+## 0.1.1
+
+### Patch Changes
+
+- Updated dependencies [fad579b]
+  - @kiri_ikki/thread-client@0.1.1
+
 ## 0.1.0
 
 ### Minor Changes
