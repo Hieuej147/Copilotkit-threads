@@ -1,0 +1,33 @@
+{{- if .Values.reconciler.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "thread-platform.fullname" . }}-reconciler
+spec:
+  schedule: {{ .Values.reconciler.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 300
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "thread-platform.serviceAccountName" . }}
+          {{- with .Values.global.imagePullSecrets }}
+          imagePullSecrets: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext: { runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001 }
+          containers:
+            - name: reconciler
+              image: {{ include "thread-platform.runtimeImage" . }}
+              command: ["node", "apps/runtime/dist/reconcile-main.js"]
+              envFrom: [{ configMapRef: { name: {{ include "thread-platform.fullname" . }} } }]
+              env:
+                - name: POSTGRES_URL
+                  valueFrom: { secretKeyRef: { name: {{ include "thread-platform.connectionsSecret" . }}, key: {{ ternary "postgres-url" .Values.externalDatabase.urlKey .Values.postgresql.enabled }} } }
+                - name: REDIS_URL
+                  valueFrom: { secretKeyRef: { name: {{ include "thread-platform.redisSecret" . }}, key: {{ ternary "redis-url" .Values.externalRedis.urlKey .Values.redis.enabled }} } }
+              securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
+{{- end }}

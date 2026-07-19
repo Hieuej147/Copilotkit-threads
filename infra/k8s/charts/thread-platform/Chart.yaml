@@ -1,0 +1,15 @@
+apiVersion: v2
+name: thread-platform
+description: Self-hosted CopilotKit and LangGraph thread platform
+type: application
+version: 0.2.0
+appVersion: "0.2.0"
+dependencies:
+  - name: postgresql
+    version: 16.7.24
+    repository: oci://registry-1.docker.io/bitnamicharts
+    condition: postgresql.enabled
+  - name: redis
+    version: 27.0.14
+    repository: oci://registry-1.docker.io/bitnamicharts
+    condition: redis.enabled

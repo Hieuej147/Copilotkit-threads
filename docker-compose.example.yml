@@ -1,0 +1,35 @@
+services:
+  langgraph-migrate:
+    build: { context: ., dockerfile: examples/langgraph-agent/Dockerfile }
+    environment:
+      POSTGRES_URL: postgresql://agent:agent@postgres:5432/agent_threads
+    command: ["/app/.venv/bin/python", "-m", "app.migrate"]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  agent:
+    build: { context: ., dockerfile: examples/langgraph-agent/Dockerfile }
+    environment:
+      POSTGRES_URL: postgresql://agent:agent@postgres:5432/agent_threads
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      CHAT_MODEL: ${CHAT_MODEL:-gpt-4.1-mini}
+    ports: ["8000:8000"]
+    depends_on:
+      langgraph-migrate: { condition: service_completed_successfully }
+
+  runtime:
+    environment:
+      AGENT_URL: http://agent:8000/agent
+    depends_on:
+      agent: { condition: service_started }
+
+  web:
+    build:
+      context: .
+      dockerfile: examples/nextjs-copilotkit/Dockerfile
+      args:
+        NEXT_PUBLIC_RUNTIME_URL: http://localhost:4000/api/copilotkit
+        NEXT_PUBLIC_THREAD_API_URL: http://localhost:4000
+    ports: ["${WEB_PORT:-3000}:3000"]
+    depends_on:
+      runtime: { condition: service_healthy }

@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "thread-platform.fullname" . }}-title-worker
+  labels: {{- include "thread-platform.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.titleWorker.replicas }}
+  selector:
+    matchLabels: { app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: title-worker }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: title-worker }
+    spec:
+      serviceAccountName: {{ include "thread-platform.serviceAccountName" . }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001 }
+      containers:
+        - name: title-worker
+          image: {{ include "thread-platform.runtimeImage" . }}
+          imagePullPolicy: {{ .Values.runtime.image.pullPolicy }}
+          command: ["node", "apps/runtime/dist/title-worker-main.js"]
+          envFrom:
+            - { configMapRef: { name: {{ include "thread-platform.fullname" . }} } }
+          {{- if .Values.titleWorker.existingSecret }}
+            - { secretRef: { name: {{ .Values.titleWorker.existingSecret }} } }
+          {{- end }}
+          env:
+            - name: POSTGRES_URL
+              valueFrom: { secretKeyRef: { name: {{ include "thread-platform.connectionsSecret" . }}, key: {{ ternary "postgres-url" .Values.externalDatabase.urlKey .Values.postgresql.enabled }} } }
+            - name: REDIS_URL
+              valueFrom: { secretKeyRef: { name: {{ include "thread-platform.redisSecret" . }}, key: {{ ternary "redis-url" .Values.externalRedis.urlKey .Values.redis.enabled }} } }
+          resources: {{- toYaml .Values.titleWorker.resources | nindent 12 }}
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }

@@ -1,0 +1,52 @@
+{{- if .Values.examples.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "thread-platform.fullname" . }}-agent
+  labels: {{- include "thread-platform.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.examples.agent.replicas }}
+  selector:
+    matchLabels: { app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: agent }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: agent }
+    spec:
+      serviceAccountName: {{ include "thread-platform.serviceAccountName" . }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 45
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001 }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: agent }
+      containers:
+        - name: agent
+          image: {{ include "thread-platform.exampleAgentImage" . }}
+          imagePullPolicy: {{ .Values.examples.agent.image.pullPolicy }}
+          ports: [{ name: http, containerPort: {{ .Values.examples.agent.port }} }]
+          env:
+            - name: POSTGRES_URL
+              valueFrom: { secretKeyRef: { name: {{ include "thread-platform.connectionsSecret" . }}, key: {{ ternary "postgres-url" .Values.externalDatabase.urlKey .Values.postgresql.enabled }} } }
+          {{- if .Values.examples.agent.existingSecret }}
+          envFrom: [{ secretRef: { name: {{ .Values.examples.agent.existingSecret }} } }]
+          {{- end }}
+          readinessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 8, periodSeconds: 10 }
+          livenessProbe: { tcpSocket: { port: http }, initialDelaySeconds: 10, periodSeconds: 20 }
+          startupProbe: { tcpSocket: { port: http }, failureThreshold: 30, periodSeconds: 5 }
+          resources: {{- toYaml .Values.examples.agent.resources | nindent 12 }}
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "thread-platform.fullname" . }}-agent
+spec:
+  selector: { app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: agent }
+  ports: [{ name: http, port: {{ .Values.examples.agent.port }}, targetPort: http }]
+{{- end }}

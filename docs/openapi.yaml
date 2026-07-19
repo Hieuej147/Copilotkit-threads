@@ -1,0 +1,117 @@
+openapi: 3.1.0
+info:
+  title: Thread Platform API
+  version: 2.0.0
+servers:
+  - url: http://localhost:4000/v2
+security:
+  - bearerAuth: []
+  - gatewayHeaders: []
+paths:
+  /threads:
+    post:
+      summary: Create an idempotent thread
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [requestId]
+              properties:
+                requestId: { type: string, format: uuid }
+                agentId: { type: string }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/Thread" } } } }
+        "200": { description: Existing idempotent result, content: { application/json: { schema: { $ref: "#/components/schemas/Thread" } } } }
+    get:
+      summary: List threads using keyset pagination
+      parameters:
+        - { in: query, name: agentId, schema: { type: string } }
+        - { in: query, name: status, schema: { enum: [active, archived] } }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 100, default: 30 } }
+        - { in: query, name: cursor, schema: { type: string } }
+      responses:
+        "200":
+          description: Thread page and SSE snapshot cursor
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor, eventCursor]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Thread" } }
+                  nextCursor: { type: [string, "null"] }
+                  eventCursor: { type: string, pattern: "^[0-9]+$" }
+  /threads/{threadId}:
+    parameters:
+      - { in: path, name: threadId, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: Get one thread
+      responses:
+        "200": { description: Thread, content: { application/json: { schema: { $ref: "#/components/schemas/Thread" } } } }
+        "404": { description: Not found or not owned by principal }
+    patch:
+      summary: Set a permanent manual title
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties: { title: { type: string, minLength: 1, maxLength: 160 } }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/Thread" } } } }
+    delete:
+      summary: Soft-delete a thread
+      responses: { "204": { description: Deleted } }
+  /threads/{threadId}/messages:
+    parameters:
+      - { in: path, name: threadId, required: true, schema: { type: string, format: uuid } }
+      - { in: query, name: after, schema: { type: integer, minimum: 0 } }
+      - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 200 } }
+    get:
+      summary: List projected messages
+      responses: { "200": { description: Message page } }
+  /threads/{threadId}/archive:
+    post:
+      summary: Archive a thread
+      parameters: [{ in: path, name: threadId, required: true, schema: { type: string, format: uuid } }]
+      responses: { "200": { description: Archived } }
+  /threads/{threadId}/unarchive:
+    post:
+      summary: Restore an archived thread
+      parameters: [{ in: path, name: threadId, required: true, schema: { type: string, format: uuid } }]
+      responses: { "200": { description: Restored } }
+  /thread-events:
+    get:
+      summary: Realtime thread metadata event stream
+      parameters:
+        - { in: header, name: Last-Event-ID, schema: { type: string, pattern: "^[0-9]+$" } }
+      responses:
+        "200": { description: text/event-stream with durable replay }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+    gatewayHeaders:
+      type: apiKey
+      in: header
+      name: x-auth-user-id
+  schemas:
+    Thread:
+      type: object
+      required: [id, namespace, agentId, title, titleStatus, status, messageCount, version, createdAt, updatedAt, lastActivityAt]
+      properties:
+        id: { type: string, format: uuid }
+        namespace: { type: string }
+        agentId: { type: string }
+        title: { type: string }
+        titleStatus: { enum: [pending, generating, generated, fallback, manual] }
+        status: { enum: [active, archived, deleted] }
+        messageCount: { type: integer, minimum: 0 }
+        lastMessagePreview: { type: [string, "null"] }
+        version: { type: integer, minimum: 0 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        lastActivityAt: { type: string, format: date-time }

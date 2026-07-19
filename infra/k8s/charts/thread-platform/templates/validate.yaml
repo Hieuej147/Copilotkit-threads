@@ -1,0 +1,21 @@
+{{- if and .Values.ingress.enabled (eq .Values.auth.mode "development") (not .Values.postgresql.enabled) }}
+{{- fail "auth.mode=development is only allowed with the local in-cluster PostgreSQL profile" }}
+{{- end }}
+{{- if and .Values.ingress.enabled (eq .Values.auth.mode "gateway") (not .Values.auth.gatewayConfigured) }}
+{{- fail "auth.gatewayConfigured=true is required when exposing gateway-authenticated Runtime through ingress" }}
+{{- end }}
+{{- if and (not .Values.postgresql.enabled) (not .Values.externalDatabase.existingSecret) }}
+{{- fail "externalDatabase.existingSecret is required when postgresql.enabled=false" }}
+{{- end }}
+{{- if and (not .Values.redis.enabled) (not .Values.externalRedis.existingSecret) }}
+{{- fail "externalRedis.existingSecret is required when redis.enabled=false" }}
+{{- end }}
+{{- if and (not .Values.examples.enabled) (not .Values.agent.url) }}
+{{- fail "agent.url is required when examples.enabled=false" }}
+{{- end }}
+{{- if and (eq .Values.auth.mode "jwt") (or (not .Values.auth.jwt.issuer) (not .Values.auth.jwt.audience) (not .Values.auth.jwt.jwksUrl)) }}
+{{- fail "auth.jwt issuer, audience, and jwksUrl are required for auth.mode=jwt" }}
+{{- end }}
+{{- if and (gt (int .Values.titleWorker.replicas) 0) (not .Values.titleWorker.existingSecret) }}
+{{- fail "titleWorker.existingSecret containing TITLE_API_KEY is required when titleWorker.replicas > 0" }}
+{{- end }}

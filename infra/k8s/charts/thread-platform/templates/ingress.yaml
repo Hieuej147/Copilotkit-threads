@@ -1,0 +1,35 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "thread-platform.fullname" . }}
+  labels: {{- include "thread-platform.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls: {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /api/copilotkit
+            pathType: Prefix
+            backend:
+              service: { name: {{ include "thread-platform.fullname" . }}-runtime, port: { name: http } }
+          - path: /v2
+            pathType: Prefix
+            backend:
+              service: { name: {{ include "thread-platform.fullname" . }}-runtime, port: { name: http } }
+          {{- if .Values.examples.enabled }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: {{ include "thread-platform.fullname" . }}-web, port: { name: http } }
+          {{- end }}
+{{- end }}

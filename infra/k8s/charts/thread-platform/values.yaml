@@ -1,0 +1,98 @@
+global:
+  projectId: ""
+  namespace: ""
+  imagePullSecrets: []
+
+runtime:
+  image: { repository: copilotkit-threads-runtime, tag: latest, pullPolicy: IfNotPresent }
+  replicas: 2
+  port: 4000
+  existingSecret: ""
+  corsOrigins: ["http://localhost:3000"]
+  rateLimit: { requestsPerMinute: 120 }
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 1000m, memory: 1Gi }
+  autoscaling: { enabled: false, minReplicas: 2, maxReplicas: 10, targetCPUUtilizationPercentage: 70 }
+  podAnnotations: {}
+
+agent:
+  id: default
+  url: ""
+
+titleWorker:
+  replicas: 1
+  existingSecret: ""
+  baseUrl: https://api.openai.com/v1
+  model: gpt-4.1-mini
+  timeoutMs: 15000
+  maxAttempts: 3
+  claimIdleMs: 60000
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+reconciler:
+  enabled: true
+  schedule: "*/5 * * * *"
+  staleAfterSeconds: 600
+
+auth:
+  mode: gateway
+  gatewayConfigured: false
+  tenantHeader: x-auth-tenant-id
+  userHeader: x-auth-user-id
+  roleHeader: x-auth-roles
+  jwt:
+    issuer: ""
+    audience: ""
+    jwksUrl: ""
+    tenantClaim: tenant_id
+    userClaim: sub
+    rolesClaim: roles
+  developmentPrincipal: { tenantId: local, userId: developer }
+
+examples:
+  enabled: false
+  agent:
+    image: { repository: copilotkit-threads-agent, tag: latest, pullPolicy: IfNotPresent }
+    replicas: 1
+    port: 8000
+    existingSecret: ""
+    resources:
+      requests: { cpu: 200m, memory: 384Mi }
+      limits: { cpu: 2000m, memory: 2Gi }
+  web:
+    image: { repository: copilotkit-threads-web, tag: latest, pullPolicy: IfNotPresent }
+    replicas: 1
+    port: 3000
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { cpu: 500m, memory: 512Mi }
+
+postgresql:
+  enabled: false
+  auth: { username: agent, password: local-agent, database: agent_threads }
+  primary: { persistence: { enabled: true, size: 8Gi } }
+
+redis:
+  enabled: false
+  architecture: standalone
+  auth: { enabled: true, password: local-redis }
+  master: { persistence: { enabled: true, size: 2Gi } }
+
+externalDatabase: { existingSecret: "", urlKey: postgres-url }
+externalRedis: { existingSecret: "", urlKey: redis-url }
+
+ingress:
+  enabled: false
+  className: ""
+  host: threads.localhost
+  annotations: {}
+  tls: []
+
+networkPolicy:
+  enabled: true
+  ingressNamespaceSelector: { kubernetes.io/metadata.name: ingress-nginx }
+podDisruptionBudget: { enabled: true, minAvailable: 1 }
+serviceAccount: { create: true, name: "" }

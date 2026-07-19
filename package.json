@@ -1,0 +1,18 @@
+{
+  "name": "copilotkit-threads",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.12.1",
+  "scripts": {
+    "build": "pnpm --recursive build",
+    "dev": "pnpm --filter @threads/contracts build && pnpm --parallel --filter @threads/runtime dev",
+    "dev:example": "pnpm --filter @threads/contracts build && pnpm --filter @threads/client build && pnpm --parallel --filter @threads/runtime --filter @threads/example-nextjs dev",
+    "lint": "pnpm --filter @threads/contracts build && pnpm --filter @threads/client build && pnpm --filter @threads/react build && pnpm --recursive lint",
+    "test": "pnpm --filter @threads/contracts build && pnpm --filter @threads/client build && pnpm --filter @threads/react build && pnpm --recursive test",
+    "typecheck": "pnpm --filter @threads/contracts build && pnpm --filter @threads/client build && pnpm --filter @threads/react build && pnpm --recursive typecheck",
+    "db:migrate": "pnpm --filter @threads/runtime db:migrate"
+  },
+  "engines": {
+    "node": ">=20.19"
+  }
+}

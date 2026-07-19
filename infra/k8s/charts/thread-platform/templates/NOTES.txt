@@ -1,0 +1,12 @@
+Thread platform {{ .Chart.AppVersion }} installed for project {{ .Values.global.projectId }}.
+
+Runtime service:
+  {{ include "thread-platform.fullname" . }}-runtime:{{ .Values.runtime.port }}
+
+Check rollout:
+  kubectl -n {{ .Release.Namespace }} get pods,jobs
+  kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "thread-platform.fullname" . }}-runtime
+
+{{- if .Values.ingress.enabled }}
+Public endpoint: http{{ if .Values.ingress.tls }}s{{ end }}://{{ .Values.ingress.host }}
+{{- end }}

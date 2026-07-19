@@ -1,0 +1,33 @@
+global:
+  projectId: starter
+  namespace: starter
+  security:
+    allowInsecureImages: true
+runtime:
+  replicas: 1
+  corsOrigins: ["http://threads.localhost"]
+titleWorker:
+  replicas: 1
+  existingSecret: starter-model
+auth:
+  mode: development
+postgresql:
+  enabled: true
+  image:
+    repository: bitnamilegacy/postgresql
+redis:
+  enabled: true
+  image:
+    repository: bitnamilegacy/redis
+examples:
+  enabled: true
+  agent:
+    existingSecret: starter-model
+ingress:
+  enabled: true
+  className: traefik
+  host: threads.localhost
+networkPolicy:
+  enabled: false
+podDisruptionBudget:
+  enabled: false

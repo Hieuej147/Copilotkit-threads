@@ -1,0 +1,24 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.12.1 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20.19.4, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: docker compose -f docker-compose.yml -f docker-compose.example.yml config --quiet
+      - uses: azure/setup-helm@v4
+      - run: helm dependency build infra/k8s/charts/thread-platform
+      - run: helm lint infra/k8s/charts/thread-platform -f infra/k8s/charts/thread-platform/values-local.yaml

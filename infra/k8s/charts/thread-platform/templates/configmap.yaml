@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "thread-platform.fullname" . }}
+  labels: {{- include "thread-platform.labels" . | nindent 4 }}
+data:
+  AGENT_NAMESPACE: {{ .Values.global.namespace | quote }}
+  PROJECT_ID: {{ .Values.global.projectId | quote }}
+  AGENT_ID: {{ .Values.agent.id | quote }}
+  AGENT_URL: {{ include "thread-platform.agentUrl" . | quote }}
+  CORS_ORIGIN: {{ join "," .Values.runtime.corsOrigins | quote }}
+  RATE_LIMIT_REQUESTS_PER_MINUTE: {{ .Values.runtime.rateLimit.requestsPerMinute | quote }}
+  TITLE_JOB_MAX_ATTEMPTS: {{ .Values.titleWorker.maxAttempts | quote }}
+  TITLE_JOB_CLAIM_IDLE_MS: {{ .Values.titleWorker.claimIdleMs | quote }}
+  TITLE_BASE_URL: {{ .Values.titleWorker.baseUrl | quote }}
+  TITLE_MODEL: {{ .Values.titleWorker.model | quote }}
+  TITLE_TIMEOUT_MS: {{ .Values.titleWorker.timeoutMs | quote }}
+  RUN_STALE_AFTER_SECONDS: {{ .Values.reconciler.staleAfterSeconds | quote }}
+  AUTH_MODE: {{ .Values.auth.mode | quote }}
+  AUTH_TENANT_HEADER: {{ .Values.auth.tenantHeader | quote }}
+  AUTH_USER_HEADER: {{ .Values.auth.userHeader | quote }}
+  AUTH_ROLES_HEADER: {{ .Values.auth.roleHeader | quote }}
+  {{- if eq .Values.auth.mode "jwt" }}
+  JWT_ISSUER: {{ .Values.auth.jwt.issuer | quote }}
+  JWT_AUDIENCE: {{ .Values.auth.jwt.audience | quote }}
+  JWT_JWKS_URL: {{ .Values.auth.jwt.jwksUrl | quote }}
+  {{- end }}
+  JWT_TENANT_CLAIM: {{ .Values.auth.jwt.tenantClaim | quote }}
+  JWT_USER_CLAIM: {{ .Values.auth.jwt.userClaim | quote }}
+  JWT_ROLES_CLAIM: {{ .Values.auth.jwt.rolesClaim | quote }}
+  DEV_TENANT_ID: {{ .Values.auth.developmentPrincipal.tenantId | quote }}
+  DEV_USER_ID: {{ .Values.auth.developmentPrincipal.userId | quote }}
