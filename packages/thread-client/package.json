@@ -1,23 +1,45 @@
 {
   "name": "@kiri_ikki/thread-client",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": false,
   "license": "MIT",
-  "repository": { "type": "git", "url": "git+https://github.com/Hieuej147/Copilotkit-threads.git", "directory": "packages/thread-client" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Hieuej147/Copilotkit-threads.git",
+    "directory": "packages/thread-client"
+  },
   "homepage": "https://github.com/Hieuej147/Copilotkit-threads#readme",
-  "bugs": { "url": "https://github.com/Hieuej147/Copilotkit-threads/issues" },
-  "publishConfig": { "access": "public", "provenance": true },
-  "files": ["dist"],
+  "bugs": {
+    "url": "https://github.com/Hieuej147/Copilotkit-threads/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "node --import tsx --test tests/*.test.ts"
   },
-  "dependencies": { "@kiri_ikki/thread-contracts": "workspace:*" },
-  "devDependencies": { "@types/node": "22.19.1", "tsx": "4.20.6", "typescript": "5.9.3" }
+  "dependencies": {
+    "@kiri_ikki/thread-contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.1",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3"
+  }
 }
