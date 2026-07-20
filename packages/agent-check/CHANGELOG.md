@@ -1,5 +1,12 @@
 # @kiri_ikki/thread-agent-check
 
+## 1.0.1
+
+### Patch Changes
+
+- 513f50f: Publish the Runtime image on native amd64 and arm64 GitHub runners to avoid
+  QEMU failures during multi-platform releases.
+
 ## 1.0.0
 
 ### Major Changes
