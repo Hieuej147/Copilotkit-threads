@@ -46,7 +46,7 @@ or start from `examples/consumer-starter/compose.yaml`. Pin an immutable version
 ```yaml
 services:
   runtime:
-    image: ghcr.io/hieuej147/copilotkit-threads-runtime:0.1.1
+    image: ghcr.io/hieuej147/copilotkit-threads-runtime:1.0.0
     environment:
       POSTGRES_URL: postgresql://...
       REDIS_URL: redis://...

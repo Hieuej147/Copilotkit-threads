@@ -1,8 +1,14 @@
 {
   "name": "@kiri_ikki/thread-react",
-  "version": "0.1.1",
+  "version": "1.0.0",
   "description": "React hooks for self-hosted CopilotKit thread history and pagination",
-  "keywords": ["copilotkit", "langgraph", "threads", "react", "hooks"],
+  "keywords": [
+    "copilotkit",
+    "langgraph",
+    "threads",
+    "react",
+    "hooks"
+  ],
   "private": false,
   "license": "MIT",
   "repository": {
