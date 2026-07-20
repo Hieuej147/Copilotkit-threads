@@ -1,8 +1,14 @@
 {
   "name": "@kiri_ikki/thread-client",
-  "version": "0.1.1",
+  "version": "1.0.0",
   "description": "Framework-neutral client for self-hosted CopilotKit thread history",
-  "keywords": ["copilotkit", "langgraph", "threads", "ag-ui", "client"],
+  "keywords": [
+    "copilotkit",
+    "langgraph",
+    "threads",
+    "ag-ui",
+    "client"
+  ],
   "private": false,
   "license": "MIT",
   "repository": {

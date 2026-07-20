@@ -1,5 +1,17 @@
 # @kiri_ikki/thread-client
 
+## 1.0.0
+
+### Major Changes
+
+- fa1b5ab: Release Thread Platform 1.0 with API v3, durable event batching, canonical message parts,
+  and a dynamic self-hosted agent registry. Thread API v2 is removed.
+
+### Patch Changes
+
+- Updated dependencies [fa1b5ab]
+  - @kiri_ikki/thread-contracts@1.0.0
+
 ## 0.1.1
 
 ### Patch Changes
