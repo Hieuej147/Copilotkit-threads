@@ -19,7 +19,7 @@ services:
       retries: 20
 
   core-migrate:
-    image: &runtime-image ghcr.io/hieuej147/copilotkit-threads-runtime:${THREAD_PLATFORM_VERSION:-0.1.0}
+    image: &runtime-image ghcr.io/hieuej147/copilotkit-threads-runtime:${THREAD_PLATFORM_VERSION:-0.1.1}
     command: ["node", "apps/runtime/dist/migrate.js"]
     environment: &storage
       POSTGRES_URL: postgresql://agent:agent@postgres:5432/agent_threads

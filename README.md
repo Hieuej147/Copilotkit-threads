@@ -26,8 +26,8 @@ tests React v2 agent, context, suggestion, tool-rendering and HITL hooks while
 continuing to use the self-hosted `useThreadManager` instead of CopilotKit
 Cloud threads.
 
-Until the first GHCR release exists, repository maintainers use `make dev-up`
-to build Runtime from the current checkout.
+Repository maintainers use `make dev-up` to build Runtime from the current
+checkout instead of pulling the released image.
 
 ```bash
 make demo-logs   # follow all logs
