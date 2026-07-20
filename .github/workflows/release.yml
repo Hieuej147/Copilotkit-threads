@@ -37,6 +37,15 @@ jobs:
           "packages/thread-react/package.json", "packages/agent-check/package.json"]) {
           const actual=JSON.parse(fs.readFileSync(file)).version; if (actual !== expected)
           throw new Error(`${file} is ${actual}, expected ${expected}`); }'
+      - name: Verify deployment artifact versions
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: >-
+          node -e 'const fs=require("node:fs"); const expected=process.env.RELEASE_TAG.replace(/^v/, "");
+          const chart=fs.readFileSync("infra/k8s/charts/thread-platform/Chart.yaml","utf8");
+          const values=fs.readFileSync("infra/k8s/charts/thread-platform/values.yaml","utf8");
+          if (!chart.includes(`appVersion: "${expected}"`) || !values.includes(`tag: "${expected}"`))
+          throw new Error("Helm release references do not match the Git tag");'
       - run: pnpm release
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

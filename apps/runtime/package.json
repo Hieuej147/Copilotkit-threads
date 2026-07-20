@@ -9,6 +9,7 @@
     "start": "node dist/server.js",
     "start:title-worker": "node dist/title-worker-main.js",
     "reconcile": "node dist/reconcile-main.js",
+    "agents": "node dist/agent-admin-cli.js",
     "db:migrate": "tsx src/migrate.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "tsc -p tsconfig.json --noEmit",

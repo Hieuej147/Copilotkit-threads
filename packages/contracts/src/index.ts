@@ -24,6 +24,23 @@ export const threadSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   lastActivityAt: z.string(),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+});
+
+export const messagePartTypeSchema = z.enum([
+  "text",
+  "tool_call",
+  "tool_result",
+  "activity",
+  "interrupt",
+]);
+
+export const messagePartSchema = z.object({
+  index: z.number().int().nonnegative(),
+  type: messagePartTypeSchema,
+  content: z.unknown(),
+  status: z.enum(["streaming", "completed", "failed"]),
+  toolCallId: z.string().nullable(),
 });
 
 export const threadTitleUpdatedSchema = z.object({
@@ -45,6 +62,7 @@ export const threadMessageSchema = z.object({
   parentMessageId: z.string().nullable(),
   createdAt: z.coerce.date().transform((value) => value.toISOString()).or(z.string()),
   updatedAt: z.coerce.date().transform((value) => value.toISOString()).or(z.string()),
+  parts: z.array(messagePartSchema).default([]),
 });
 
 export const threadPageSchema = z.object({
@@ -76,6 +94,52 @@ export const threadEventSchema = z.object({
 export const createThreadSchema = z.object({
   requestId: z.string().uuid(),
   agentId: z.string().min(1).max(100).optional(),
+  metadata: z.record(z.string(), z.unknown()).default({}).refine(
+    (value) => new TextEncoder().encode(JSON.stringify(value)).byteLength <= 16 * 1024,
+    "metadata must not exceed 16 KiB",
+  ),
+});
+
+const credentialReferenceSchema = z.string().max(512).refine((value) => {
+  if (/^env:[A-Z][A-Z0-9_]{0,127}$/.test(value)) return true;
+  if (!value.startsWith("file:")) return false;
+  const path = value.slice(5);
+  return path.length > 0 && path.split("/").every((part) =>
+    part !== "." && part !== ".." && /^[a-zA-Z0-9._-]+$/.test(part));
+}, "credential reference must use env:NAME or a safe file:relative/path");
+
+export const agentDefinitionSchema = z.object({
+  id: z.string().uuid(),
+  agentId: z.string().min(1).max(100),
+  displayName: z.string().min(1).max(160),
+  endpointUrl: z.string().url(),
+  healthUrl: z.string().url().nullable(),
+  credentialRef: credentialReferenceSchema.nullable(),
+  enabled: z.boolean(),
+  timeoutMs: z.number().int().min(1_000).max(3_600_000),
+  maxConcurrentRuns: z.number().int().min(1).max(10_000),
+  titleEnabled: z.boolean(),
+  titleBaseUrl: z.string().url().nullable(),
+  titleModel: z.string().nullable(),
+  titleCredentialRef: credentialReferenceSchema.nullable(),
+  version: z.number().int().positive(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const upsertAgentDefinitionSchema = agentDefinitionSchema.pick({
+  displayName: true,
+  endpointUrl: true,
+  credentialRef: true,
+  enabled: true,
+  timeoutMs: true,
+  maxConcurrentRuns: true,
+  titleEnabled: true,
+}).extend({
+  healthUrl: z.string().url().nullable().optional(),
+  titleBaseUrl: z.string().url().nullable().optional(),
+  titleModel: z.string().min(1).max(160).nullable().optional(),
+  titleCredentialRef: z.string().nullable().optional(),
 });
 
 export const renameThreadSchema = z.object({
@@ -89,3 +153,6 @@ export type ThreadPage = z.infer<typeof threadPageSchema>;
 export type ThreadMessagePage = z.infer<typeof threadMessagePageSchema>;
 export type ThreadEvent = z.infer<typeof threadEventSchema>;
 export type ThreadEventType = z.infer<typeof threadEventTypeSchema>;
+export type MessagePart = z.infer<typeof messagePartSchema>;
+export type AgentDefinition = z.infer<typeof agentDefinitionSchema>;
+export type UpsertAgentDefinition = z.infer<typeof upsertAgentDefinitionSchema>;

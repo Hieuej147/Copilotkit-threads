@@ -3,7 +3,7 @@ kind: Job
 metadata:
   name: {{ include "thread-platform.fullname" . }}-postgres-migrate
   annotations:
-    helm.sh/hook: post-install,pre-upgrade
+    helm.sh/hook: pre-upgrade
     helm.sh/hook-weight: "-20"
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 spec:
@@ -21,6 +21,11 @@ spec:
         - name: migrate
           image: {{ include "thread-platform.runtimeImage" . }}
           command: ["node", "apps/runtime/dist/migrate.js"]
+          envFrom:
+            - { configMapRef: { name: {{ include "thread-platform.fullname" . }} } }
+          {{- if .Values.titleWorker.existingSecret }}
+            - { secretRef: { name: {{ .Values.titleWorker.existingSecret }} } }
+          {{- end }}
           env:
             - name: POSTGRES_URL
               valueFrom: { secretKeyRef: { name: {{ include "thread-platform.connectionsSecret" . }}, key: {{ ternary "postgres-url" .Values.externalDatabase.urlKey .Values.postgresql.enabled }} } }
@@ -33,7 +38,7 @@ kind: Job
 metadata:
   name: {{ include "thread-platform.fullname" . }}-langgraph-migrate
   annotations:
-    helm.sh/hook: post-install,pre-upgrade
+    helm.sh/hook: pre-upgrade
     helm.sh/hook-weight: "-10"
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 spec:

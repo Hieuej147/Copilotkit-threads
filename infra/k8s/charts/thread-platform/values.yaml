@@ -11,6 +11,10 @@ runtime:
   existingSecret: ""
   corsOrigins: ["http://localhost:3000"]
   rateLimit: { requestsPerMinute: 120 }
+  eventBatch: { maxDelayMs: 50, maxSize: 32, maxBytes: 262144 }
+  registryCacheTtlMs: 30000
+  poolMax: 20
+  credentialSecret: ""
   resources:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: 1000m, memory: 1Gi }
@@ -20,6 +24,9 @@ runtime:
 agent:
   id: default
   url: ""
+  allowedHosts: []
+  defaultTimeoutMs: 120000
+  defaultMaxConcurrentRuns: 25
 
 titleWorker:
   replicas: 1
@@ -38,6 +45,11 @@ reconciler:
   schedule: "*/5 * * * *"
   staleAfterSeconds: 600
   deletedThreadRetentionDays: 30
+  runEventRetentionDays: 7
+  threadEventRetentionDays: 7
+  titleJobRetentionDays: 30
+  messageRetentionDays: 365
+  runRetentionDays: 365
 
 auth:
   mode: gateway
@@ -53,6 +65,8 @@ auth:
     userClaim: sub
     rolesClaim: roles
   developmentPrincipal: { tenantId: local, userId: developer }
+  adminRole: thread-platform-admin
+  adminDevelopmentEnabled: false
 
 examples:
   enabled: false

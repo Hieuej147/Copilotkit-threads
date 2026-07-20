@@ -87,7 +87,9 @@ const client = new ThreadClient({
 export function AgentWorkspace() {
   const manager = useThreadManager({ client, agentId: "support", pageSize: 30 });
   const threadId = manager.selectedThreadId;
-  if (!threadId) return <button onClick={() => manager.createThread()}>New chat</button>;
+  // Use a draft composer here. On first submit, create the thread, mount the
+  // keyed CopilotKit tree, and dispatch that pending message once.
+  if (!threadId) return <DraftComposer onFirstSubmit={startThreadAndSend} />;
 
   return (
     <CopilotKit
@@ -105,11 +107,16 @@ export function AgentWorkspace() {
 
 Keep `ThreadClient` stable. Use `manager.fetchMore()` at the sidebar scroll
 sentinel. Key `CopilotKit` by `threadId`; Runtime reconnect supplies history to
-CopilotChat, so the product must not reconstruct chat messages manually.
+CopilotChat, so the product must not reconstruct chat messages manually. The
+reference implementation of `startThreadAndSend` is
+`examples/nextjs-copilotkit/components/threaded-app.tsx`; it prevents empty rows
+and duplicate first-message dispatches.
 
 ## 5. Production configuration
 
 - Use `AUTH_MODE=gateway` behind an authenticated gateway, or validated JWT.
+- Set `AGENT_ALLOWED_HOSTS` to exact private agent hosts (or narrowly scoped
+  wildcard suffixes); Runtime refuses production startup without an allowlist.
 - Use a unique `AGENT_NAMESPACE` per product/environment.
 - Pin the Runtime image to a release, never `latest`.
 - Run migrations as a deployment job before Runtime rolls out.

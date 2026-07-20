@@ -1,5 +1,5 @@
 import type { Redis } from "ioredis";
-import type { PublishedThreadEvent } from "./repository.js";
+import type { PublishedThreadEvent } from "./types.js";
 
 export function threadEventChannel(namespace: string, tenantId: string, ownerId: string): string {
   return `agent:${namespace}:thread-events:${tenantId}:${ownerId}`;

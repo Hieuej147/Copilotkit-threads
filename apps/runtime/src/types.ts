@@ -1,4 +1,5 @@
 import type { BaseEvent, Message, RunAgentInput } from "@ag-ui/client";
+import type { ThreadEvent, ThreadEventType } from "@kiri_ikki/thread-contracts";
 
 export interface ThreadRecord {
   id: string;
@@ -13,6 +14,7 @@ export interface ThreadRecord {
   createdAt: string;
   updatedAt: string;
   lastActivityAt: string;
+  metadata: Record<string, unknown>;
 }
 
 export interface RunRecord {
@@ -34,3 +36,34 @@ export interface BeginRunInput {
   messages: Message[];
   rawInput: RunAgentInput;
 }
+
+export type PublishedThreadEvent = {
+  tenantId: string;
+  ownerId: string;
+  event: ThreadEvent;
+};
+
+export type TitleJobRecord = {
+  id: string;
+  threadId: string;
+  agentId: string;
+  source: string;
+  attempts: number;
+};
+
+export type OperationalMetrics = {
+  activeRuns: number;
+  titlePending: number;
+  titleRunning: number;
+  titleDead: number;
+  oldestTitleJobSeconds: number;
+};
+
+export type ThreadEventRow = {
+  id: string;
+  event_type: ThreadEventType;
+  payload: { thread: ThreadRecord };
+  created_at: Date;
+  tenant_id: string;
+  owner_id: string;
+};

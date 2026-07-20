@@ -16,8 +16,16 @@ describe("runtime configuration", () => {
       JWT_ISSUER: "https://identity.example.com/",
       JWT_AUDIENCE: "threads",
       JWT_JWKS_URL: "https://identity.example.com/.well-known/jwks.json",
+      AGENT_ALLOWED_HOSTS: "agent.internal",
     });
     assert.equal(config.AUTH_MODE, "jwt");
+  });
+
+  it("requires an agent host allowlist outside development", () => {
+    assert.throws(
+      () => loadConfig({ ...required, AUTH_MODE: "gateway" }),
+      /AGENT_ALLOWED_HOSTS/,
+    );
   });
 
   it("accepts an OpenAI-compatible title endpoint", () => {
@@ -38,5 +46,14 @@ describe("runtime configuration", () => {
       ...required,
       DELETED_THREAD_RETENTION_DAYS: "0",
     }).DELETED_THREAD_RETENTION_DAYS, 0);
+  });
+
+  it("separates retention and durable batching defaults", () => {
+    const config = loadConfig(required);
+    assert.equal(config.RUN_EVENT_RETENTION_DAYS, 7);
+    assert.equal(config.THREAD_EVENT_RETENTION_DAYS, 7);
+    assert.equal(config.MESSAGE_RETENTION_DAYS, 365);
+    assert.equal(config.EVENT_BATCH_MAX_DELAY_MS, 50);
+    assert.equal(config.EVENT_BATCH_MAX_SIZE, 32);
   });
 });

@@ -4,6 +4,17 @@ Production-oriented thread infrastructure for CopilotKit and AG-UI agents. It
 owns thread metadata, durable run history, realtime sidebar updates, async
 titles and per-thread concurrency without CopilotKit Cloud.
 
+The next major release introduces Thread API `/v3`, a PostgreSQL-backed dynamic
+agent registry, canonical message parts and durable event batching. Thread API
+v2 is removed; see
+[`docs/V3_MIGRATION.md`](docs/V3_MIGRATION.md).
+
+> [!WARNING]
+> This is an AI-assisted, vibe-coded reference implementation, not a production
+> certification. Before handling real user data, review the source and SQL,
+> threat-model the deployment, pin artifacts, run integration/load tests, and
+> arrange independent security and recovery audits for your environment.
+
 ## Try the full demo
 
 Prerequisites: Docker Compose and an OpenAI API key.

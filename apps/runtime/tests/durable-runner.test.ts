@@ -4,6 +4,7 @@ import {
   createBlockingStreamReader,
   createEventNormalizer,
   createThreadEventNormalizer,
+  isDurableFlushEvent,
 } from "../src/durable-runner.js";
 
 function textEvent(
@@ -74,6 +75,16 @@ describe("durable stream Redis isolation", () => {
 
     assert.equal(createBlockingStreamReader(redis as never), reader);
     assert.deepEqual(options, { maxRetriesPerRequest: null });
+  });
+});
+
+describe("durable batch boundaries", () => {
+  it("forces lifecycle and HITL boundaries but buffers content chunks", () => {
+    assert.equal(isDurableFlushEvent({ type: "TEXT_MESSAGE_CONTENT" } as never), false);
+    assert.equal(isDurableFlushEvent({ type: "TEXT_MESSAGE_END" } as never), true);
+    assert.equal(isDurableFlushEvent({ type: "TOOL_CALL_END" } as never), true);
+    assert.equal(isDurableFlushEvent({ type: "CUSTOM" } as never), true);
+    assert.equal(isDurableFlushEvent({ type: "RUN_FINISHED" } as never), true);
   });
 });
 

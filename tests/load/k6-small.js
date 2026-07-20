@@ -18,7 +18,7 @@ export const options = {
 const baseUrl = __ENV.BASE_URL || "http://localhost:4000";
 
 export default function () {
-  const response = http.get(`${baseUrl}/v2/threads?limit=30`, {
+  const response = http.get(`${baseUrl}/v3/threads?limit=30`, {
     headers: {
       "x-auth-tenant-id": __ENV.TENANT_ID || "load-test",
       "x-auth-user-id": `user-${__VU % 100}`,

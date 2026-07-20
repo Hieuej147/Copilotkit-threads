@@ -107,8 +107,8 @@ export async function checkAgent(options: AgentCheckOptions): Promise<Validation
   const timeoutMs = options.timeoutMs ?? 60_000;
   const prompt = options.prompt ?? "Reply with one short greeting.";
   const concurrency = options.concurrency ?? 1;
-  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 10) {
-    throw new Error("concurrency must be an integer from 1 to 10");
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 100) {
+    throw new Error("concurrency must be an integer from 1 to 100");
   }
   if (options.healthUrl) await checkHealth(options.healthUrl, timeoutMs);
   return Promise.all(Array.from({ length: concurrency }, () => runOnce({
@@ -118,11 +118,15 @@ export async function checkAgent(options: AgentCheckOptions): Promise<Validation
   })));
 }
 
-export async function checkRuntime(runtimeUrl: string, timeoutMs = 15_000): Promise<void> {
+export async function checkRuntime(
+  runtimeUrl: string,
+  timeoutMs = 15_000,
+): Promise<void> {
   const baseUrl = runtimeUrl.replace(/\/$/, "");
+  const apiBase = `${baseUrl}/v3`;
   const requestId = randomUUID();
   const headers = { "content-type": "application/json" };
-  const create = await fetch(`${baseUrl}/v2/threads`, {
+  const create = await fetch(`${apiBase}/threads`, {
     method: "POST",
     headers,
     body: JSON.stringify({ requestId }),
@@ -134,7 +138,7 @@ export async function checkRuntime(runtimeUrl: string, timeoutMs = 15_000): Prom
   const thread = await create.json() as { id?: string };
   if (!thread.id) throw new Error("Thread create response did not include id");
 
-  const idempotent = await fetch(`${baseUrl}/v2/threads`, {
+  const idempotent = await fetch(`${apiBase}/threads`, {
     method: "POST",
     headers,
     body: JSON.stringify({ requestId }),
@@ -143,10 +147,10 @@ export async function checkRuntime(runtimeUrl: string, timeoutMs = 15_000): Prom
   const duplicate = await idempotent.json() as { id?: string };
   if (!idempotent.ok || duplicate.id !== thread.id) throw new Error("Thread creation is not idempotent");
 
-  const list = await fetch(`${baseUrl}/v2/threads?limit=1`, { signal: AbortSignal.timeout(timeoutMs) });
+  const list = await fetch(`${apiBase}/threads?limit=1`, { signal: AbortSignal.timeout(timeoutMs) });
   if (!list.ok) throw new Error(`Thread list failed with HTTP ${list.status}`);
 
-  const remove = await fetch(`${baseUrl}/v2/threads/${thread.id}`, {
+  const remove = await fetch(`${apiBase}/threads/${thread.id}`, {
     method: "DELETE",
     signal: AbortSignal.timeout(timeoutMs),
   });

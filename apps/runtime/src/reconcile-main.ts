@@ -4,7 +4,7 @@ import { createPool } from "./db.js";
 import { ThreadRepository } from "./repository.js";
 
 const config = loadConfig();
-const pool = createPool(config.POSTGRES_URL);
+const pool = createPool(config.POSTGRES_URL, config.POSTGRES_POOL_MAX);
 const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: 2 });
 redis.on("error", (error) => {
   console.error(JSON.stringify({ level: "warn", message: "reconciler_redis_error", error: String(error) }));
@@ -20,12 +20,14 @@ try {
     await repository.interruptStaleRun(run.id);
     interrupted += 1;
   }
-  const [prunedEvents, prunedTitleJobs, prunedThreadEvents] = await Promise.all([
-    repository.pruneEvents(config.EVENT_RETENTION_DAYS),
-    repository.pruneTitleJobs(config.EVENT_RETENTION_DAYS),
-    repository.pruneThreadEvents(config.EVENT_RETENTION_DAYS),
+  const [prunedEvents, prunedTitleJobs, prunedThreadEvents, prunedMessages] = await Promise.all([
+    repository.pruneEvents(config.RUN_EVENT_RETENTION_DAYS),
+    repository.pruneTitleJobs(config.TITLE_JOB_RETENTION_DAYS),
+    repository.pruneThreadEvents(config.THREAD_EVENT_RETENTION_DAYS),
+    repository.pruneMessages(config.MESSAGE_RETENTION_DAYS),
   ]);
   const purgedThreads = await repository.purgeDeletedThreads(config.DELETED_THREAD_RETENTION_DAYS);
+  const prunedRuns = await repository.pruneRuns(config.RUN_RETENTION_DAYS);
   console.log(JSON.stringify({
     level: "info",
     message: "run_reconciliation_complete",
@@ -34,6 +36,8 @@ try {
     prunedEvents,
     prunedTitleJobs,
     prunedThreadEvents,
+    prunedMessages,
+    prunedRuns,
     purgedThreads,
   }));
 } finally {

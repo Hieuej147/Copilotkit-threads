@@ -11,6 +11,8 @@ spec:
   template:
     metadata:
       labels: { app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: agent }
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
     spec:
       serviceAccountName: {{ include "thread-platform.serviceAccountName" . }}
       {{- with .Values.global.imagePullSecrets }}
@@ -19,6 +21,15 @@ spec:
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 45
       securityContext: { runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001 }
+      initContainers:
+        - name: migrate
+          image: {{ include "thread-platform.exampleAgentImage" . }}
+          imagePullPolicy: {{ .Values.examples.agent.image.pullPolicy }}
+          command: ["/app/.venv/bin/python", "-m", "app.migrate"]
+          env:
+            - name: POSTGRES_URL
+              valueFrom: { secretKeyRef: { name: {{ include "thread-platform.connectionsSecret" . }}, key: {{ ternary "postgres-url" .Values.externalDatabase.urlKey .Values.postgresql.enabled }} } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname

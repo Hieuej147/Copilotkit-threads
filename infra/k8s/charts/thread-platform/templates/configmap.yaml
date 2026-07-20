@@ -1,3 +1,7 @@
+{{- $agentAllowedHosts := .Values.agent.allowedHosts }}
+{{- if .Values.examples.enabled }}
+{{- $agentAllowedHosts = append $agentAllowedHosts (printf "%s-agent" (include "thread-platform.fullname" .)) }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -8,6 +12,15 @@ data:
   PROJECT_ID: {{ .Values.global.projectId | quote }}
   AGENT_ID: {{ .Values.agent.id | quote }}
   AGENT_URL: {{ include "thread-platform.agentUrl" . | quote }}
+  AGENT_ALLOWED_HOSTS: {{ join "," $agentAllowedHosts | quote }}
+  AGENT_REGISTRY_CACHE_TTL_MS: {{ .Values.runtime.registryCacheTtlMs | quote }}
+  AGENT_DEFAULT_TIMEOUT_MS: {{ .Values.agent.defaultTimeoutMs | quote }}
+  AGENT_DEFAULT_MAX_CONCURRENT_RUNS: {{ .Values.agent.defaultMaxConcurrentRuns | quote }}
+  SECRET_FILE_ROOT: "/var/run/secrets/thread-platform"
+  POSTGRES_POOL_MAX: {{ .Values.runtime.poolMax | quote }}
+  EVENT_BATCH_MAX_DELAY_MS: {{ .Values.runtime.eventBatch.maxDelayMs | quote }}
+  EVENT_BATCH_MAX_SIZE: {{ .Values.runtime.eventBatch.maxSize | quote }}
+  EVENT_BATCH_MAX_BYTES: {{ .Values.runtime.eventBatch.maxBytes | quote }}
   CORS_ORIGIN: {{ join "," .Values.runtime.corsOrigins | quote }}
   RATE_LIMIT_REQUESTS_PER_MINUTE: {{ .Values.runtime.rateLimit.requestsPerMinute | quote }}
   COPILOTKIT_TELEMETRY_DISABLED: {{ .Values.runtime.telemetryDisabled | quote }}
@@ -18,6 +31,11 @@ data:
   TITLE_TIMEOUT_MS: {{ .Values.titleWorker.timeoutMs | quote }}
   RUN_STALE_AFTER_SECONDS: {{ .Values.reconciler.staleAfterSeconds | quote }}
   DELETED_THREAD_RETENTION_DAYS: {{ .Values.reconciler.deletedThreadRetentionDays | quote }}
+  RUN_EVENT_RETENTION_DAYS: {{ .Values.reconciler.runEventRetentionDays | quote }}
+  THREAD_EVENT_RETENTION_DAYS: {{ .Values.reconciler.threadEventRetentionDays | quote }}
+  TITLE_JOB_RETENTION_DAYS: {{ .Values.reconciler.titleJobRetentionDays | quote }}
+  MESSAGE_RETENTION_DAYS: {{ .Values.reconciler.messageRetentionDays | quote }}
+  RUN_RETENTION_DAYS: {{ .Values.reconciler.runRetentionDays | quote }}
   AUTH_MODE: {{ .Values.auth.mode | quote }}
   AUTH_TENANT_HEADER: {{ .Values.auth.tenantHeader | quote }}
   AUTH_USER_HEADER: {{ .Values.auth.userHeader | quote }}
@@ -32,3 +50,5 @@ data:
   JWT_ROLES_CLAIM: {{ .Values.auth.jwt.rolesClaim | quote }}
   DEV_TENANT_ID: {{ .Values.auth.developmentPrincipal.tenantId | quote }}
   DEV_USER_ID: {{ .Values.auth.developmentPrincipal.userId | quote }}
+  ADMIN_ROLE: {{ .Values.auth.adminRole | quote }}
+  ADMIN_DEVELOPMENT_ENABLED: {{ .Values.auth.adminDevelopmentEnabled | quote }}

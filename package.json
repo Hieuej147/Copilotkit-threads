@@ -17,7 +17,7 @@
     "typecheck": "pnpm --filter @kiri_ikki/thread-contracts build && pnpm --filter @kiri_ikki/thread-client build && pnpm --filter @kiri_ikki/thread-react build && pnpm --recursive typecheck",
     "db:migrate": "pnpm --filter @kiri_ikki/thread-runtime db:migrate",
     "changeset": "changeset",
-    "version-packages": "changeset version",
+    "version-packages": "changeset version && node scripts/sync-release-version.mjs",
     "release": "changeset publish"
   },
   "engines": {

@@ -8,7 +8,7 @@ the reusable product is Runtime, PostgreSQL migrations, SDKs and Helm chart.
 
 ```mermaid
 flowchart LR
-  UI[Product UI\nCopilotKit + useThreadManager] -->|/v2 threads + SSE| RT[Thread Runtime]
+  UI[Product UI\nCopilotKit + useThreadManager] -->|/v3 threads + SSE| RT[Thread Runtime]
   UI -->|/api/copilotkit AG-UI| RT
   RT -->|AG-UI HTTP, private| AG[Project LangGraph agent]
   RT --> PG[(PostgreSQL)]
@@ -19,7 +19,9 @@ flowchart LR
   AG -->|LangGraph checkpoints| PG
 ```
 
-One Runtime deployment serves one `AGENT_NAMESPACE` and configured `AGENT_ID`.
+One Runtime deployment serves one `AGENT_NAMESPACE` and multiple agent IDs from
+the PostgreSQL-backed registry. Deploy separate installations for different
+projects/environments.
 The UUID `threadId` is identical in the UI, CopilotKit Runtime, AG-UI request and
 LangGraph `configurable.thread_id`.
 
@@ -71,6 +73,19 @@ For microservices or separate databases, never use a cross-service foreign key.
 Store the UUID plus tenant/user ownership, call the Thread API, and handle
 `404 THREAD_NOT_FOUND` as a normal stale-reference case.
 
+At creation time, attach small non-authoritative product context (maximum 16 KiB)
+without coupling schemas:
+
+```ts
+await manager.createThread({
+  requestId: crypto.randomUUID(),
+  metadata: { entityType: "support_ticket", entityId: ticket.id },
+});
+```
+
+Keep authoritative relations and permissions in the product database; thread
+metadata is for routing/display context, not authorization.
+
 ## 3. Integration options
 
 ### Option A: deploy as a separate service (recommended)
@@ -78,7 +93,7 @@ Store the UUID plus tenant/user ownership, call the Thread API, and handle
 1. Build/publish `apps/runtime/Dockerfile`.
 2. Apply the Helm chart or core Compose file.
 3. Set `agent.url` to the project's private AG-UI LangGraph endpoint.
-4. Expose `/api/copilotkit`, `/v2/threads` and `/v2/thread-events` through the
+4. Expose `/api/copilotkit`, `/v3/threads` and `/v3/thread-events` through the
    product gateway.
 5. Give the browser only the gateway URL, never PostgreSQL/Redis/agent URLs.
 
@@ -116,7 +131,9 @@ export function AgentWorkspace() {
   const threads = useThreadManager({ client, agentId: "support", pageSize: 30 });
   const threadId = threads.selectedThreadId;
 
-  if (!threadId) return <button onClick={() => threads.createThread()}>New chat</button>;
+  // When threadId is null, render a draft composer. On its first submit,
+  // await threads.createThread(), mount CopilotKit, then dispatch that message.
+  if (!threadId) return <DraftComposer onFirstSubmit={startThreadAndSend} />;
   return (
     <CopilotKit
       key={threadId}
@@ -139,6 +156,8 @@ Important rules:
   hook for chat behavior. Use `useThreadManager` only for sidebar metadata.
 - Do not merge message history manually into CopilotChat. Runtime `connect()`
   replays persisted AG-UI events when a thread is selected.
+- Do not create an empty thread just because the chat route mounted. Present a
+  draft composer and create it idempotently only when the first message is sent.
 - `fetchMore()` performs keyset pagination. The hook subscribes from the event
   cursor returned with the initial snapshot, so mounting does not replay all old
   sidebar events.
@@ -181,7 +200,9 @@ authentication between Runtime and agent.
 
 ## 6. HTTP API
 
-Base path is `/v2`. Full schemas are in `docs/openapi.yaml`.
+The only Thread API base path is `/v3`; `/v2` returns 404. CopilotKit package
+imports ending in `/v2` are unrelated to this HTTP API and must not be changed.
+Full schemas are in `docs/openapi.yaml`.
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -201,8 +222,17 @@ this action. Delete sets `status='deleted'`, has no public restore endpoint and
 enters the physical-purge lifecycle described in section 11.
 
 One run is allowed per thread. Different threads can run concurrently, including
-multiple threads owned by the same user. A second run on the same thread receives
-`409 THREAD_BUSY`. Scale Runtime horizontally; Redis coordinates the lock.
+multiple threads owned by the same user. A second run on the same thread ends its
+AG-UI stream with `RUN_ERROR: THREAD_BUSY`; exceeding an agent's configured
+capacity returns `RUN_ERROR: AGENT_CAPACITY_EXCEEDED`. Scale Runtime horizontally;
+Redis coordinates both controls.
+
+Agent registry management is restricted to principals with the
+`thread-platform-admin` role. Use `GET/PUT /v3/admin/agents`, disable instead of
+deleting historical agents, and test connectivity through
+`POST /v3/admin/agents/{agentId}/test`. The same operations are available from
+`node apps/runtime/dist/agent-admin-cli.js agents ...`. Store only `env:` or
+`file:` credential references and allowlist every agent host.
 
 ## 7. Authentication and isolation
 
@@ -270,6 +300,12 @@ ORDER BY last_activity_at DESC LIMIT 30;
 SELECT thread_id, sequence, role, status, left(content::text, 120)
 FROM agent_core.agent_messages ORDER BY created_at DESC LIMIT 50;
 
+SELECT message_id, part_index, part_type, status, left(content::text, 160)
+FROM agent_core.agent_message_parts ORDER BY created_at DESC LIMIT 100;
+
+SELECT agent_id, endpoint_url, enabled, timeout_ms, max_concurrent_runs, version
+FROM agent_core.agent_definitions ORDER BY agent_id;
+
 SELECT thread_id, status, attempts, last_error, updated_at
 FROM agent_core.agent_title_jobs ORDER BY created_at DESC LIMIT 30;
 
@@ -278,6 +314,19 @@ FROM agent_core.agent_thread_events ORDER BY id DESC LIMIT 50;
 ```
 
 ## 9. Kubernetes
+
+The chart enforces migration ordering in two places:
+
+- On install, Runtime and title-worker pods run the idempotent `agent_core`
+  migrator as an init container. The example LangGraph agent does the same for
+  checkpoint tables. Application containers cannot become ready first.
+- On upgrade, Helm runs the same migration jobs as `pre-upgrade` hooks before
+  rolling deployments. PostgreSQL advisory locking makes concurrent Runtime
+  init containers safe.
+
+Deployment pod templates include a ConfigMap checksum. A Helm configuration
+change therefore triggers a rollout automatically; do not rely on old pods
+eventually re-reading environment variables.
 
 Local k3d example:
 
@@ -355,11 +404,13 @@ remain consistent. Test restore into an isolated database quarterly. Redis does
 not need to be restored for history; active runs may be marked interrupted by the
 reconciler after lock loss.
 
-`EVENT_RETENTION_DAYS` controls durable sidebar event pruning. It does not delete
-threads/messages. `REDIS_STREAM_TTL_SECONDS` controls transient AG-UI live stream
-retention; PostgreSQL still stores complete run events for reconnect.
+`RUN_EVENT_RETENTION_DAYS`, `THREAD_EVENT_RETENTION_DAYS`,
+`TITLE_JOB_RETENTION_DAYS` and `MESSAGE_RETENTION_DAYS` control independent
+retention windows. `REDIS_STREAM_TTL_SECONDS` controls transient AG-UI live stream
+retention. Completed history reconnects from canonical messages/parts; raw run
+events are short-lived audit and active-run recovery data.
 
-`DELETE /v2/threads/{id}` immediately hides a thread by setting
+`DELETE /v3/threads/{id}` immediately hides a thread by setting
 `status='deleted'` and `deleted_at`. The reconciler physically removes the core
 thread, runs, messages and events after `DELETED_THREAD_RETENTION_DAYS` (30 by
 default, 0 means the next reconciler run). In the bundled same-database topology
@@ -380,8 +431,9 @@ docker compose --profile maintenance run --rm reconciler
 `404 /api/copilotkit`: Runtime must use CopilotKit multi-route handler and the UI
 must point exactly to `/api/copilotkit`.
 
-`THREAD_BUSY`: another run owns the same thread lock. Switch to a different
-thread or stop/wait for the current run.
+`THREAD_BUSY`: another run owns the same thread lock. This is an AG-UI
+`RUN_ERROR`, not an HTTP response status. Switch thread or stop/wait for the
+current run.
 
 AG-UI errors about text start/content/end or custom events after finish: verify
 the project agent emits one valid lifecycle. Runtime also normalizes duplicate

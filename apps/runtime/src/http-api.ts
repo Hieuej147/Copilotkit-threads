@@ -9,7 +9,8 @@ import {
 } from "@kiri_ikki/thread-contracts";
 import { z } from "zod";
 import { currentPrincipal } from "./auth.js";
-import { ThreadRepository, type PublishedThreadEvent } from "./repository.js";
+import type { ThreadStore } from "./ports.js";
+import type { PublishedThreadEvent } from "./types.js";
 import { publishThreadEvent, threadEventChannel } from "./thread-events.js";
 
 const uuid = z.string().uuid();
@@ -31,12 +32,12 @@ async function notify(redis: Redis, namespace: string, event: PublishedThreadEve
   });
 }
 
-export function createThreadApi(repository: ThreadRepository, redis: Redis, namespace: string): Router {
+export function createThreadApi(repository: ThreadStore, redis: Redis, namespace: string): Router {
   const router = Router();
 
   router.post("/threads", async (request: Request, response: Response) => {
     const body = createThreadSchema.parse(request.body ?? {});
-    const result = await repository.createThread(body.requestId, body.agentId);
+    const result = await repository.createThread(body.requestId, body.agentId, body.metadata);
     await notify(redis, namespace, result.event);
     response.status(result.created ? 201 : 200).json(threadSchema.parse(result.thread));
   });

@@ -3,9 +3,10 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { createPool } from "./db.js";
 import { loadConfig } from "./config.js";
+import { randomUUID } from "node:crypto";
 
 const config = loadConfig();
-const pool = createPool(config.POSTGRES_URL);
+const pool = createPool(config.POSTGRES_URL, config.POSTGRES_POOL_MAX);
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const migrationDirectory = resolve(currentDir, "../../../infra/postgres");
 const client = await pool.connect();
@@ -38,6 +39,19 @@ try {
     );
     console.log(`Applied agent_core migration ${migration}`);
   }
+  await client.query(
+    `INSERT INTO agent_core.agent_definitions
+       (id, namespace, agent_id, display_name, endpoint_url, health_url, enabled,
+        timeout_ms, max_concurrent_runs, title_enabled, title_base_url, title_model,
+        title_credential_ref)
+     VALUES ($1,$2,$3,$4,$5,$6,true,$7,$8,true,$9,$10,$11)
+     ON CONFLICT (namespace, agent_id) DO NOTHING`,
+    [randomUUID(), config.AGENT_NAMESPACE, config.AGENT_ID, config.AGENT_ID,
+      config.AGENT_URL, new URL("/health", config.AGENT_URL).toString(),
+      config.AGENT_DEFAULT_TIMEOUT_MS, config.AGENT_DEFAULT_MAX_CONCURRENT_RUNS,
+      config.TITLE_BASE_URL, config.TITLE_MODEL,
+      config.TITLE_API_KEY ? "env:TITLE_API_KEY" : null],
+  );
 } finally {
   await client.query("SELECT pg_advisory_unlock(hashtext('agent_core.schema_migrations'))").catch(() => undefined);
   client.release();

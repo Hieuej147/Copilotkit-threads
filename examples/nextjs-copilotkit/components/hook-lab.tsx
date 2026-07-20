@@ -22,9 +22,7 @@ import {
   type CSSProperties,
   type ReactNode,
   memo,
-  useEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
 import { accentColors, type Accent, HookRegistrations } from "./hook-registrations";
@@ -78,16 +76,6 @@ export const HookLab = memo(function HookLab({
     updates: [UseAgentUpdate.OnMessagesChanged, UseAgentUpdate.OnRunStatusChanged],
     throttleMs: 150,
   });
-  const runningRef = useRef(agent.isRunning);
-  useEffect(() => {
-    runningRef.current = agent.isRunning;
-  }, [agent.isRunning]);
-  useEffect(
-    () => () => {
-      if (runningRef.current) agent.abortRun();
-    },
-    [agent],
-  );
   const capabilities = useCapabilities("default");
   const chatConfiguration = useCopilotChatConfiguration();
   const { copilotkit, executingToolCallIds } = useCopilotKit();

@@ -1,7 +1,7 @@
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.graph import END
 
-from app.graph import json_safe, repair_orphan_tool_calls, route_after_chat
+from app.graph import json_safe, repair_tool_history, route_after_chat
 
 
 def test_backend_tool_call_routes_to_tool_node():
@@ -29,7 +29,7 @@ def test_orphan_frontend_tool_call_is_repaired_before_next_user_message():
         HumanMessage(content="continue"),
     ]
 
-    repaired = repair_orphan_tool_calls(messages)
+    repaired = repair_tool_history(messages)
 
     assert isinstance(repaired[1], ToolMessage)
     assert repaired[1].tool_call_id == "orphan"
@@ -46,7 +46,17 @@ def test_answered_tool_call_is_not_duplicated():
         HumanMessage(content="continue"),
     ]
 
-    assert repair_orphan_tool_calls(messages) == messages
+    assert repair_tool_history(messages) == messages
+
+
+def test_orphan_tool_result_is_removed():
+    messages = [
+        HumanMessage(content="before"),
+        ToolMessage(content="orphaned", tool_call_id="missing-call"),
+        HumanMessage(content="continue"),
+    ]
+
+    assert repair_tool_history(messages) == [messages[0], messages[2]]
 
 
 def test_context_models_are_converted_to_plain_json():

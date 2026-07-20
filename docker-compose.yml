@@ -29,6 +29,12 @@ services:
     environment:
       POSTGRES_URL: postgresql://agent:agent@postgres:5432/agent_threads
       REDIS_URL: redis://redis:6379
+      AGENT_URL: ${AGENT_URL:-http://host.docker.internal:8000/agent}
+      AGENT_NAMESPACE: ${AGENT_NAMESPACE:-starter}
+      AGENT_ID: ${AGENT_ID:-default}
+      TITLE_BASE_URL: ${TITLE_BASE_URL:-https://api.openai.com/v1}
+      TITLE_API_KEY: ${TITLE_API_KEY:-${OPENAI_API_KEY:-}}
+      TITLE_MODEL: ${TITLE_MODEL:-gpt-4.1-mini}
     command: ["node", "apps/runtime/dist/migrate.js"]
     depends_on:
       postgres: { condition: service_healthy }
@@ -41,7 +47,17 @@ services:
       AGENT_URL: ${AGENT_URL:-http://host.docker.internal:8000/agent}
       AGENT_NAMESPACE: ${AGENT_NAMESPACE:-starter}
       AGENT_ID: ${AGENT_ID:-default}
+      AGENT_ALLOWED_HOSTS: ${AGENT_ALLOWED_HOSTS:-host.docker.internal,agent,localhost}
+      ADMIN_DEVELOPMENT_ENABLED: ${ADMIN_DEVELOPMENT_ENABLED:-true}
+      EVENT_BATCH_MAX_DELAY_MS: ${EVENT_BATCH_MAX_DELAY_MS:-50}
+      EVENT_BATCH_MAX_SIZE: ${EVENT_BATCH_MAX_SIZE:-32}
+      EVENT_BATCH_MAX_BYTES: ${EVENT_BATCH_MAX_BYTES:-262144}
       DELETED_THREAD_RETENTION_DAYS: ${DELETED_THREAD_RETENTION_DAYS:-30}
+      RUN_EVENT_RETENTION_DAYS: ${RUN_EVENT_RETENTION_DAYS:-7}
+      THREAD_EVENT_RETENTION_DAYS: ${THREAD_EVENT_RETENTION_DAYS:-7}
+      TITLE_JOB_RETENTION_DAYS: ${TITLE_JOB_RETENTION_DAYS:-30}
+      MESSAGE_RETENTION_DAYS: ${MESSAGE_RETENTION_DAYS:-365}
+      RUN_RETENTION_DAYS: ${RUN_RETENTION_DAYS:-365}
       CORS_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
       COPILOTKIT_TELEMETRY_DISABLED: ${COPILOTKIT_TELEMETRY_DISABLED:-true}
       AUTH_MODE: ${AUTH_MODE:-development}
@@ -67,6 +83,7 @@ services:
       REDIS_URL: redis://redis:6379
       AGENT_NAMESPACE: ${AGENT_NAMESPACE:-starter}
       AGENT_ID: ${AGENT_ID:-default}
+      AGENT_ALLOWED_HOSTS: ${AGENT_ALLOWED_HOSTS:-host.docker.internal,agent,localhost}
       TITLE_BASE_URL: ${TITLE_BASE_URL:-https://api.openai.com/v1}
       TITLE_API_KEY: ${TITLE_API_KEY:-${OPENAI_API_KEY:-}}
       TITLE_MODEL: ${TITLE_MODEL:-gpt-4.1-mini}
@@ -84,6 +101,11 @@ services:
       AGENT_NAMESPACE: ${AGENT_NAMESPACE:-starter}
       AGENT_ID: ${AGENT_ID:-default}
       DELETED_THREAD_RETENTION_DAYS: ${DELETED_THREAD_RETENTION_DAYS:-30}
+      RUN_EVENT_RETENTION_DAYS: ${RUN_EVENT_RETENTION_DAYS:-7}
+      THREAD_EVENT_RETENTION_DAYS: ${THREAD_EVENT_RETENTION_DAYS:-7}
+      TITLE_JOB_RETENTION_DAYS: ${TITLE_JOB_RETENTION_DAYS:-30}
+      MESSAGE_RETENTION_DAYS: ${MESSAGE_RETENTION_DAYS:-365}
+      RUN_RETENTION_DAYS: ${RUN_RETENTION_DAYS:-365}
     depends_on:
       postgres-migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }

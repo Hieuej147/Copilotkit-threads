@@ -11,13 +11,14 @@ import { Observable, ReplaySubject, type Subscription } from "rxjs";
 import { randomUUID } from "node:crypto";
 import { currentPrincipal, type Principal } from "./auth.js";
 import type { RuntimeConfig } from "./config.js";
-import { ThreadRepository } from "./repository.js";
+import type { AgentRegistry, RunStore, ThreadStore } from "./ports.js";
 
 type ActiveRun = {
   subscription: Subscription | null;
   abort: () => void;
   token: string;
   runId: string;
+  agentId: string;
   heartbeat: NodeJS.Timeout;
   finalize: (status: "completed" | "failed" | "cancelled", error?: Error) => Promise<void>;
 };
@@ -110,13 +111,24 @@ export function createBlockingStreamReader(redis: Redis): Redis {
   return redis.duplicate({ maxRetriesPerRequest: null });
 }
 
+export function isDurableFlushEvent(event: BaseEvent): boolean {
+  return event.type === "TEXT_MESSAGE_END"
+    || event.type === "TOOL_CALL_END"
+    || event.type === "TOOL_CALL_RESULT"
+    || event.type === "RUN_FINISHED"
+    || event.type === "RUN_ERROR"
+    || event.type === "CUSTOM";
+}
+
 export class DurableAgentRunner extends AgentRunner {
   private readonly activeRuns = new Map<string, ActiveRun>();
+  private readonly counters = { eventBatches: 0, eventsPersisted: 0, batchFailures: 0, capacityRejected: 0 };
 
   constructor(
-    private readonly repository: ThreadRepository,
+    private readonly repository: RunStore & Pick<ThreadStore, "getThread">,
     private readonly redis: Redis,
     private readonly config: RuntimeConfig,
+    private readonly agentRegistry?: AgentRegistry,
   ) {
     super();
   }
@@ -131,6 +143,29 @@ export class DurableAgentRunner extends AgentRunner {
 
   private streamKey(threadId: string): string {
     return `agent:${this.config.AGENT_NAMESPACE}:events:${threadId}`;
+  }
+
+  private semaphoreKey(agentId: string): string {
+    return `agent:${this.config.AGENT_NAMESPACE}:capacity:${agentId}`;
+  }
+
+  private async acquireAgentSlot(agentId: string, token: string, limit: number): Promise<boolean> {
+    const now = Date.now();
+    const expiresAt = now + this.config.THREAD_LOCK_TTL_SECONDS * 1_000;
+    const result = await this.redis.eval(
+      `redis.call('zremrangebyscore', KEYS[1], '-inf', ARGV[1])
+       if redis.call('zcard', KEYS[1]) >= tonumber(ARGV[3]) then return 0 end
+       redis.call('zadd', KEYS[1], ARGV[2], ARGV[4])
+       redis.call('expire', KEYS[1], ARGV[5])
+       return 1`,
+      1, this.semaphoreKey(agentId), now, expiresAt, limit, token,
+      this.config.THREAD_LOCK_TTL_SECONDS,
+    );
+    return Number(result) === 1;
+  }
+
+  private async releaseAgentSlot(agentId: string, token: string): Promise<void> {
+    await this.redis.zrem(this.semaphoreKey(agentId), token);
   }
 
   run(request: AgentRunnerRunRequest): Observable<BaseEvent> {
@@ -157,28 +192,46 @@ export class DurableAgentRunner extends AgentRunner {
   ): Promise<void> {
     const { threadId } = request;
     const token = randomUUID();
-    const acquired = await this.redis.set(
-      this.lockKey(threadId),
-      token,
-      "EX",
-      this.config.THREAD_LOCK_TTL_SECONDS,
-      "NX",
-    );
-    if (!acquired) {
-      subject.next(runErrorEvent(new Error("THREAD_BUSY")));
+    const agentId = request.agent.agentId || this.config.AGENT_ID;
+    const definition = await this.agentRegistry?.get(agentId);
+    if (this.agentRegistry && !definition?.enabled) {
+      subject.next(runErrorEvent(new Error("AGENT_NOT_CONFIGURED")));
       subject.complete();
       return;
     }
-
-    await this.redis.del(this.cancelKey(threadId));
-    const runId = request.input.runId || randomUUID();
-    request.input.runId = runId;
-
     try {
+      const acquired = await this.redis.set(
+        this.lockKey(threadId),
+        token,
+        "EX",
+        this.config.THREAD_LOCK_TTL_SECONDS,
+        "NX",
+      );
+      if (!acquired) {
+        subject.next(runErrorEvent(new Error("THREAD_BUSY")));
+        subject.complete();
+        return;
+      }
+      const slotAcquired = await this.acquireAgentSlot(
+        agentId,
+        token,
+        definition?.maxConcurrentRuns ?? this.config.AGENT_DEFAULT_MAX_CONCURRENT_RUNS,
+      );
+      if (!slotAcquired) {
+        this.counters.capacityRejected += 1;
+        await this.releaseLock(threadId, token);
+        subject.next(runErrorEvent(new Error("AGENT_CAPACITY_EXCEEDED")));
+        subject.complete();
+        return;
+      }
+
+      await this.redis.del(this.cancelKey(threadId));
+      const runId = request.input.runId || randomUUID();
+      request.input.runId = runId;
       const { run } = await this.repository.beginRun({
         threadId,
         runId,
-        agentId: request.agent.agentId || this.config.AGENT_ID,
+        agentId,
         messages: request.input.messages,
         rawInput: request.input,
       });
@@ -192,9 +245,43 @@ export class DurableAgentRunner extends AgentRunner {
       const agent = request.agent.clone();
       const normalizeEvent = createEventNormalizer();
       let writeChain = Promise.resolve();
+      let eventBuffer: BaseEvent[] = [];
+      let eventBufferBytes = 0;
+      let flushTimer: NodeJS.Timeout | null = null;
       let terminal = false;
       let terminalEventPublished = false;
       let finalizePromise: Promise<void> | null = null;
+
+      const flushEvents = (): Promise<void> => {
+        if (flushTimer) {
+          clearTimeout(flushTimer);
+          flushTimer = null;
+        }
+        if (!eventBuffer.length) return writeChain;
+        const batch = eventBuffer;
+        eventBuffer = [];
+        eventBufferBytes = 0;
+        writeChain = writeChain.then(async () => {
+          const persisted = await this.repository.appendEvents(run, batch);
+          this.counters.eventBatches += 1;
+          this.counters.eventsPersisted += persisted.length;
+          const pipeline = this.redis.pipeline();
+          for (const item of persisted) {
+            pipeline.xadd(
+              this.streamKey(threadId), "*", "key", item.key, "event", JSON.stringify(item.event),
+            );
+          }
+          pipeline.expire(this.streamKey(threadId), this.config.REDIS_STREAM_TTL_SECONDS);
+          const redisResults = await pipeline.exec();
+          const redisFailure = redisResults?.find(([failure]) => failure)?.[0];
+          if (redisFailure) throw redisFailure;
+          for (const item of persisted) subject.next(item.event);
+          if (batch.some((item) => item.type === "RUN_FINISHED" || item.type === "RUN_ERROR")) {
+            terminalEventPublished = true;
+          }
+        });
+        return writeChain;
+      };
 
       const finalize = (
         status: "completed" | "failed" | "cancelled",
@@ -205,9 +292,12 @@ export class DurableAgentRunner extends AgentRunner {
         finalizePromise = (async () => {
           let terminalError = error;
           try {
-            await writeChain;
+            await flushEvents();
             await this.repository.finishRun(runId, status, error);
-            await this.releaseLock(threadId, token);
+            await Promise.all([
+              this.releaseLock(threadId, token),
+              this.releaseAgentSlot(agentId, token),
+            ]);
           } catch (failure) {
             terminalError ??= normalizeError(failure);
             console.error(JSON.stringify({
@@ -218,7 +308,10 @@ export class DurableAgentRunner extends AgentRunner {
               error: terminalError.message,
             }));
             try {
-              await this.releaseLock(threadId, token);
+              await Promise.all([
+                this.releaseLock(threadId, token),
+                this.releaseAgentSlot(agentId, token),
+              ]);
             } catch {
               // Lock TTL is the final fallback when Redis is unavailable.
             }
@@ -242,32 +335,37 @@ export class DurableAgentRunner extends AgentRunner {
 
       const publishEvent = (event: BaseEvent): void => {
         if (terminal) return;
-        writeChain = writeChain.then(async () => {
-            const persisted = await this.repository.appendEvent(run, event);
-            await this.redis.xadd(
-              this.streamKey(threadId),
-              "*",
-              "key",
-              persisted.key,
-              "event",
-              JSON.stringify(event),
-            );
-            await this.redis.expire(this.streamKey(threadId), this.config.REDIS_STREAM_TTL_SECONDS);
-            subject.next(event);
-            if (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR") {
-              terminalEventPublished = true;
-            }
+        eventBuffer.push(event);
+        eventBufferBytes += Buffer.byteLength(JSON.stringify(event));
+        const force = isDurableFlushEvent(event);
+        if (force || eventBuffer.length >= this.config.EVENT_BATCH_MAX_SIZE
+          || eventBufferBytes >= this.config.EVENT_BATCH_MAX_BYTES) {
+          void flushEvents().catch((failure: unknown) => {
+            this.counters.batchFailures += 1;
+            const normalized = normalizeError(failure);
+            agent.abortRun();
+            void finalize("failed", normalized);
           });
-        void writeChain.catch((failure: unknown) => {
+        } else if (!flushTimer) {
+          flushTimer = setTimeout(() => void flushEvents().catch((failure: unknown) => {
+          this.counters.batchFailures += 1;
           const normalized = normalizeError(failure);
           agent.abortRun();
           void finalize("failed", normalized);
-        });
+          }), this.config.EVENT_BATCH_MAX_DELAY_MS);
+          flushTimer.unref();
+        }
       };
 
       const abort = agent.abortRun.bind(agent);
       const heartbeat = setInterval(() => {
-        void this.heartbeat(threadId, token);
+        void this.heartbeat(threadId, token).catch((failure: unknown) => {
+          const current = this.activeRuns.get(threadId);
+          if (current?.token !== token) return;
+          current.abort();
+          current.subscription?.unsubscribe();
+          void current.finalize("failed", normalizeError(failure));
+        });
       }, Math.min(10_000, (this.config.THREAD_LOCK_TTL_SECONDS * 1000) / 3));
       heartbeat.unref();
       const active: ActiveRun = {
@@ -275,6 +373,7 @@ export class DurableAgentRunner extends AgentRunner {
         abort,
         token,
         runId,
+        agentId,
         heartbeat,
         finalize,
       };
@@ -298,7 +397,10 @@ export class DurableAgentRunner extends AgentRunner {
       else subscription.unsubscribe();
     } catch (error) {
       try {
-        await this.releaseLock(threadId, token);
+        await Promise.all([
+          this.releaseLock(threadId, token),
+          this.releaseAgentSlot(agentId, token),
+        ]);
       } catch {
         // Lock TTL is the final fallback when Redis is unavailable.
       }
@@ -412,6 +514,10 @@ export class DurableAgentRunner extends AgentRunner {
     }));
   }
 
+  metrics(): Readonly<typeof this.counters> {
+    return this.counters;
+  }
+
   private async heartbeat(threadId: string, token: string): Promise<void> {
     if (await this.redis.exists(this.cancelKey(threadId))) {
       const active = this.activeRuns.get(threadId);
@@ -432,6 +538,18 @@ export class DurableAgentRunner extends AgentRunner {
       token,
       String(this.config.THREAD_LOCK_TTL_SECONDS),
     );
+    const active = this.activeRuns.get(threadId);
+    if (active?.token === token) {
+      await this.redis.zadd(
+        this.semaphoreKey(active.agentId),
+        Date.now() + this.config.THREAD_LOCK_TTL_SECONDS * 1_000,
+        token,
+      );
+      await this.redis.expire(
+        this.semaphoreKey(active.agentId),
+        this.config.THREAD_LOCK_TTL_SECONDS,
+      );
+    }
   }
 
   private async releaseLock(threadId: string, token: string): Promise<void> {

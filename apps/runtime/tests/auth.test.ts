@@ -9,6 +9,7 @@ function config(mode: "development" | "gateway") {
     POSTGRES_URL: "postgresql://localhost/test",
     REDIS_URL: "redis://localhost",
     AUTH_MODE: mode,
+    AGENT_ALLOWED_HOSTS: mode === "development" ? "" : "agent.internal",
   });
 }
 

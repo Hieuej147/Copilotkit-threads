@@ -1,6 +1,8 @@
 {
   "name": "@kiri_ikki/thread-agent-check",
   "version": "0.1.1",
+  "description": "AG-UI lifecycle and concurrency checker for LangGraph agents",
+  "keywords": ["copilotkit", "langgraph", "ag-ui", "agent", "testing"],
   "private": false,
   "license": "MIT",
   "repository": {

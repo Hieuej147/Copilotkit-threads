@@ -24,6 +24,10 @@ services:
     depends_on:
       agent: { condition: service_started }
 
+  postgres-migrate:
+    environment:
+      AGENT_URL: http://agent:8000/agent
+
   web:
     image: copilotkit-threads-web:dev
     build:

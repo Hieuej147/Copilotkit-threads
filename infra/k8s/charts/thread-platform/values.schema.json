@@ -16,7 +16,27 @@
       "required": ["id", "url"],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
-        "url": { "type": "string" }
+        "url": { "type": "string" },
+        "allowedHosts": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "defaultTimeoutMs": { "type": "integer", "minimum": 1000 },
+        "defaultMaxConcurrentRuns": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "properties": {
+        "registryCacheTtlMs": { "type": "integer", "minimum": 1000 },
+        "poolMax": { "type": "integer", "minimum": 1 },
+        "credentialSecret": { "type": "string" },
+        "eventBatch": {
+          "type": "object",
+          "required": ["maxDelayMs", "maxSize", "maxBytes"],
+          "properties": {
+            "maxDelayMs": { "type": "integer", "minimum": 10 },
+            "maxSize": { "type": "integer", "minimum": 1 },
+            "maxBytes": { "type": "integer", "minimum": 1024 }
+          }
+        }
       }
     },
     "auth": {
@@ -35,7 +55,12 @@
     "reconciler": {
       "type": "object",
       "properties": {
-        "deletedThreadRetentionDays": { "type": "integer", "minimum": 0 }
+        "deletedThreadRetentionDays": { "type": "integer", "minimum": 0 },
+        "runEventRetentionDays": { "type": "integer", "minimum": 1 },
+        "threadEventRetentionDays": { "type": "integer", "minimum": 1 },
+        "titleJobRetentionDays": { "type": "integer", "minimum": 1 },
+        "messageRetentionDays": { "type": "integer", "minimum": 1 },
+        "runRetentionDays": { "type": "integer", "minimum": 1 }
       }
     }
   }

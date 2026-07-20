@@ -12,7 +12,11 @@ spec:
   template:
     metadata:
       labels: { app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: runtime }
-      annotations: {{- toYaml .Values.runtime.podAnnotations | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.runtime.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
       serviceAccountName: {{ include "thread-platform.serviceAccountName" . }}
       {{- with .Values.global.imagePullSecrets }}
@@ -21,6 +25,21 @@ spec:
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 45
       securityContext: { runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001 }
+      initContainers:
+        - name: migrate
+          image: {{ include "thread-platform.runtimeImage" . }}
+          imagePullPolicy: {{ .Values.runtime.image.pullPolicy }}
+          command: ["node", "apps/runtime/dist/migrate.js"]
+          envFrom:
+            - { configMapRef: { name: {{ include "thread-platform.fullname" . }} } }
+          {{- if .Values.titleWorker.existingSecret }}
+            - { secretRef: { name: {{ .Values.titleWorker.existingSecret }} } }
+          {{- end }}
+          env:
+            - name: POSTGRES_URL
+              valueFrom: { secretKeyRef: { name: {{ include "thread-platform.connectionsSecret" . }}, key: {{ ternary "postgres-url" .Values.externalDatabase.urlKey .Values.postgresql.enabled }} } }
+            - { name: REDIS_URL, value: "redis://unused:6379" }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
@@ -47,7 +66,16 @@ spec:
           startupProbe: { httpGet: { path: /live, port: http }, failureThreshold: 30, periodSeconds: 5 }
           lifecycle: { preStop: { exec: { command: ["sh", "-c", "sleep 10"] } } }
           resources: {{- toYaml .Values.runtime.resources | nindent 12 }}
+          {{- if .Values.runtime.credentialSecret }}
+          volumeMounts:
+            - { name: agent-credentials, mountPath: /var/run/secrets/thread-platform, readOnly: true }
+          {{- end }}
           securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
+      {{- if .Values.runtime.credentialSecret }}
+      volumes:
+        - name: agent-credentials
+          secret: { secretName: {{ .Values.runtime.credentialSecret }} }
+      {{- end }}
 ---
 apiVersion: v1
 kind: Service

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { ThreadClient } from "../src/index.js";
+import { AgentAdminClient, ThreadClient } from "../src/index.js";
 
 const thread = {
   id: "65c823b6-4a31-46e4-9cf8-89ef64394c11",
@@ -15,6 +15,7 @@ const thread = {
   createdAt: "2026-07-19T00:00:00.000Z",
   updatedAt: "2026-07-19T00:00:00.000Z",
   lastActivityAt: "2026-07-19T00:00:00.000Z",
+  metadata: {},
 };
 
 describe("ThreadClient", () => {
@@ -33,7 +34,7 @@ describe("ThreadClient", () => {
     });
     const page = await client.list({ limit: 20 });
     assert.equal(page.eventCursor, "42");
-    assert.deepEqual(calls, [{ url: "https://threads.example/v2/threads?limit=20", authorization: "Bearer token" }]);
+    assert.deepEqual(calls, [{ url: "https://threads.example/v3/threads?limit=20", authorization: "Bearer token" }]);
   });
 
   it("uses caller requestId for idempotent creation", async () => {
@@ -48,6 +49,7 @@ describe("ThreadClient", () => {
     const requestId = "83189ec6-b705-44aa-ae18-7f3b763491fa";
     await client.create({ requestId });
     assert.equal(JSON.parse(requestBody).requestId, requestId);
+    assert.deepEqual(JSON.parse(requestBody).metadata, {});
   });
 
   it("preserves the receiver of a caller-provided fetch implementation", async () => {
@@ -82,5 +84,32 @@ describe("ThreadClient", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+describe("AgentAdminClient", () => {
+  it("targets the v3 admin API and forwards authentication", async () => {
+    let request: { url: string; method: string | undefined; authorization: string | null } | undefined;
+    const client = new AgentAdminClient({
+      baseUrl: "https://threads.example/",
+      getAccessToken: async () => "admin-token",
+      fetch: async (input, init) => {
+        const headers = new Headers(init?.headers);
+        request = {
+          url: String(input),
+          method: init?.method,
+          authorization: headers.get("authorization"),
+        };
+        return new Response(JSON.stringify({ items: [] }), {
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+    assert.deepEqual(await client.list(), []);
+    assert.deepEqual(request, {
+      url: "https://threads.example/v3/admin/agents",
+      method: undefined,
+      authorization: "Bearer admin-token",
+    });
   });
 });

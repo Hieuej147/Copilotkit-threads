@@ -24,6 +24,11 @@ services:
     environment: &storage
       POSTGRES_URL: postgresql://agent:agent@postgres:5432/agent_threads
       REDIS_URL: redis://redis:6379
+      AGENT_URL: http://agent:8000/agent
+      AGENT_NAMESPACE: consumer-starter
+      AGENT_ID: default
+      TITLE_API_KEY: ${OPENAI_API_KEY}
+      TITLE_MODEL: ${CHAT_MODEL:-gpt-4.1-mini}
     depends_on:
       postgres: { condition: service_healthy }
 
@@ -55,6 +60,8 @@ services:
       AGENT_URL: http://agent:8000/agent
       AGENT_NAMESPACE: consumer-starter
       AGENT_ID: default
+      AGENT_ALLOWED_HOSTS: agent
+      ADMIN_DEVELOPMENT_ENABLED: "true"
       AUTH_MODE: development
       CORS_ORIGIN: http://localhost:${WEB_PORT:-3000}
       TITLE_API_KEY: ${OPENAI_API_KEY}

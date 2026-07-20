@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ThreadClient, type AgentThread, type ThreadEvent } from "@kiri_ikki/thread-client";
+import {
+  ThreadClient,
+  type AgentThread,
+  type CreateThreadOptions,
+  type ThreadEvent,
+} from "@kiri_ikki/thread-client";
 
 export type UseThreadManagerOptions = {
   client: ThreadClient;
@@ -14,8 +19,13 @@ function sortThreads(threads: AgentThread[]): AgentThread[] {
     right.lastActivityAt.localeCompare(left.lastActivityAt) || right.id.localeCompare(left.id));
 }
 
-function applyEvent(threads: AgentThread[], event: ThreadEvent, status: "active" | "archived"): AgentThread[] {
-  const visible = event.thread.status === status;
+function applyEvent(
+  threads: AgentThread[],
+  event: ThreadEvent,
+  status: "active" | "archived",
+  agentId: string,
+): AgentThread[] {
+  const visible = event.thread.status === status && event.thread.agentId === agentId;
   const existing = threads.find((thread) => thread.id === event.thread.id);
   if (visible && existing && existing.version === event.thread.version) return threads;
   const remaining = threads.filter((thread) => thread.id !== event.thread.id);
@@ -46,7 +56,10 @@ export function useThreadManager({
       setThreads(page.items);
       setNextCursor(page.nextCursor);
       eventCursorRef.current = page.eventCursor;
-      setSelectedThreadId((current) => current ?? (selectFirst ? page.items[0]?.id ?? null : null));
+      setSelectedThreadId((current) => {
+        if (current && page.items.some((thread) => thread.id === current)) return current;
+        return selectFirst ? page.items[0]?.id ?? null : null;
+      });
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause : new Error(String(cause)));
@@ -61,8 +74,8 @@ export function useThreadManager({
     void loadInitial().then(() => {
       if (disposed) return;
       unsubscribe = client.subscribeToEvents((event) => {
-        setThreads((current) => applyEvent(current, event, status));
-        if (event.thread.status !== status) {
+        setThreads((current) => applyEvent(current, event, status, agentId));
+        if (event.thread.status !== status || event.thread.agentId !== agentId) {
           setSelectedThreadId((current) => current === event.thread.id ? null : current);
         }
       }, { after: eventCursorRef.current, onError: setError });
@@ -99,8 +112,10 @@ export function useThreadManager({
     }
   }, [agentId, client, nextCursor, pageSize, status]);
 
-  const createThread = useCallback(async () => {
-    const thread = await client.create({ agentId });
+  const createThread = useCallback(async (
+    options: Omit<CreateThreadOptions, "agentId"> = {},
+  ) => {
+    const thread = await client.create({ ...options, agentId });
     setThreads((current) => sortThreads([thread, ...current.filter((item) => item.id !== thread.id)]));
     setSelectedThreadId(thread.id);
     return thread;

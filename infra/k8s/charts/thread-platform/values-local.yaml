@@ -6,11 +6,13 @@ global:
 runtime:
   replicas: 1
   corsOrigins: ["http://threads.localhost"]
+  credentialSecret: starter-model
 titleWorker:
   replicas: 1
   existingSecret: starter-model
 auth:
   mode: development
+  adminDevelopmentEnabled: true
 postgresql:
   enabled: true
   image:

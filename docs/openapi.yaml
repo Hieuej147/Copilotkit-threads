@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: Thread Platform API
-  version: 2.0.0
+  version: 3.0.0
 servers:
-  - url: http://localhost:4000/v2
+  - url: http://localhost:4000/v3
 security:
   - bearerAuth: []
   - gatewayHeaders: []
@@ -21,6 +21,7 @@ paths:
               properties:
                 requestId: { type: string, format: uuid }
                 agentId: { type: string }
+                metadata: { type: object, additionalProperties: true }
       responses:
         "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/Thread" } } } }
         "200": { description: Existing idempotent result, content: { application/json: { schema: { $ref: "#/components/schemas/Thread" } } } }
@@ -73,7 +74,17 @@ paths:
       - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 200 } }
     get:
       summary: List projected messages
-      responses: { "200": { description: Message page } }
+      responses:
+        "200":
+          description: Canonical message page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Message" } }
+                  nextCursor: { type: [integer, "null"] }
   /threads/{threadId}/archive:
     post:
       summary: Archive a thread
@@ -91,6 +102,42 @@ paths:
         - { in: header, name: Last-Event-ID, schema: { type: string, pattern: "^[0-9]+$" } }
       responses:
         "200": { description: text/event-stream with durable replay }
+  /admin/agents:
+    get:
+      summary: List registered agents
+      responses:
+        "200":
+          description: Agent definitions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/AgentDefinition" } }
+  /admin/agents/{agentId}:
+    parameters: [{ in: path, name: agentId, required: true, schema: { type: string } }]
+    get:
+      summary: Get an agent definition
+      responses:
+        "200":
+          description: Agent definition
+          content: { application/json: { schema: { $ref: "#/components/schemas/AgentDefinition" } } }
+    put:
+      summary: Create or update an agent definition
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/AgentDefinitionInput" } } }
+      responses: { "200": { description: Updated }, "201": { description: Created } }
+  /admin/agents/{agentId}/disable:
+    post:
+      summary: Disable an agent without deleting historical threads
+      parameters: [{ in: path, name: agentId, required: true, schema: { type: string } }]
+      responses: { "200": { description: Disabled agent } }
+  /admin/agents/{agentId}/test:
+    post:
+      summary: Test the configured agent health endpoint
+      parameters: [{ in: path, name: agentId, required: true, schema: { type: string } }]
+      responses: { "200": { description: Healthy }, "502": { description: Upstream unhealthy } }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
@@ -115,3 +162,55 @@ components:
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
         lastActivityAt: { type: string, format: date-time }
+        metadata: { type: object, additionalProperties: true }
+    MessagePart:
+      type: object
+      required: [index, type, content, status, toolCallId]
+      properties:
+        index: { type: integer, minimum: 0 }
+        type: { enum: [text, tool_call, tool_result, activity, interrupt] }
+        content: {}
+        status: { enum: [streaming, completed, failed] }
+        toolCallId: { type: [string, "null"] }
+    Message:
+      type: object
+      required: [id, runId, sequence, role, kind, content, status, parts, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        runId: { type: [string, "null"], format: uuid }
+        sequence: { type: integer, minimum: 1 }
+        role: { enum: [user, assistant, tool, system] }
+        kind: { enum: [text, tool_call, tool_result, activity] }
+        content: {}
+        status: { enum: [streaming, completed, failed] }
+        toolCallId: { type: [string, "null"] }
+        parentMessageId: { type: [string, "null"] }
+        parts: { type: array, items: { $ref: "#/components/schemas/MessagePart" } }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    AgentDefinitionInput:
+      type: object
+      required: [displayName, endpointUrl, credentialRef, enabled, timeoutMs, maxConcurrentRuns, titleEnabled]
+      properties:
+        displayName: { type: string, minLength: 1, maxLength: 160 }
+        endpointUrl: { type: string, format: uri }
+        healthUrl: { type: [string, "null"], format: uri }
+        credentialRef: { type: [string, "null"], pattern: "^(env:|file:)" }
+        enabled: { type: boolean }
+        timeoutMs: { type: integer, minimum: 1000, maximum: 3600000 }
+        maxConcurrentRuns: { type: integer, minimum: 1, maximum: 10000 }
+        titleEnabled: { type: boolean }
+        titleBaseUrl: { type: [string, "null"], format: uri }
+        titleModel: { type: [string, "null"] }
+        titleCredentialRef: { type: [string, "null"], pattern: "^(env:|file:)" }
+    AgentDefinition:
+      allOf:
+        - { $ref: "#/components/schemas/AgentDefinitionInput" }
+        - type: object
+          required: [id, agentId, version, createdAt, updatedAt]
+          properties:
+            id: { type: string, format: uuid }
+            agentId: { type: string }
+            version: { type: integer, minimum: 1 }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }

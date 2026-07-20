@@ -5,9 +5,11 @@ runtime:
   image: { repository: registry.example.com/thread-runtime, tag: "1.0.0" }
   corsOrigins: ["https://tickets.example.com"]
   autoscaling: { enabled: true, minReplicas: 2, maxReplicas: 10, targetCPUUtilizationPercentage: 70 }
+  credentialSecret: ticketing-agent-credentials
 agent:
   id: support-agent
   url: http://ticketing-agent.ticketing.svc.cluster.local:8000/agent
+  allowedHosts: [ticketing-agent.ticketing.svc.cluster.local]
 titleWorker:
   existingSecret: ticketing-title-model
 auth:

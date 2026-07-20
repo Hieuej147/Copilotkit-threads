@@ -35,23 +35,35 @@ def chat_model() -> ChatOpenAI:
     return ChatOpenAI(model=settings.chat_model, temperature=0.2)
 
 
-def repair_orphan_tool_calls(messages: list[AnyMessage]) -> list[AnyMessage]:
-    """Make checkpoint history valid after a frontend tool run is abandoned."""
+def repair_tool_history(messages: list[AnyMessage]) -> list[AnyMessage]:
+    """Normalize checkpoint history to valid assistant/tool message groups."""
     repaired: list[AnyMessage] = []
-    for index, message in enumerate(messages):
-        repaired.append(message)
-        if not isinstance(message, AIMessage) or not message.tool_calls:
+    index = 0
+    while index < len(messages):
+        message = messages[index]
+        if isinstance(message, ToolMessage):
+            # A checkpoint/client merge can retain a result after its assistant
+            # tool-call message was replaced. OpenAI rejects that orphan result.
+            index += 1
             continue
 
-        answered_ids: set[str] = set()
-        cursor = index + 1
-        while cursor < len(messages) and isinstance(messages[cursor], ToolMessage):
-            answered_ids.add(messages[cursor].tool_call_id)
-            cursor += 1
+        repaired.append(message)
+        if not isinstance(message, AIMessage) or not message.tool_calls:
+            index += 1
+            continue
 
-        for call in message.tool_calls:
-            call_id = call.get("id")
-            if call_id and call_id not in answered_ids:
+        calls = {call.get("id"): call for call in message.tool_calls if call.get("id")}
+        answered_ids: set[str] = set()
+        index += 1
+        while index < len(messages) and isinstance(messages[index], ToolMessage):
+            result = messages[index]
+            if result.tool_call_id in calls and result.tool_call_id not in answered_ids:
+                repaired.append(result)
+                answered_ids.add(result.tool_call_id)
+            index += 1
+
+        for call_id in calls:
+            if call_id not in answered_ids:
                 repaired.append(
                     ToolMessage(
                         content="Tool execution was interrupted before completion.",
@@ -88,7 +100,7 @@ async def chat_node(state: AgentState) -> dict[str, Any]:
             f"Current application context: {json.dumps(context, ensure_ascii=False, default=str)}"
         )
     )
-    messages = repair_orphan_tool_calls(state["messages"])
+    messages = repair_tool_history(state["messages"])
     response = await chat_model().bind_tools([*TOOLS, *frontend_tools]).ainvoke(
         [system, *messages]
     )

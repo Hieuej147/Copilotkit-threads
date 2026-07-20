@@ -19,6 +19,16 @@ spec:
           imagePullSecrets: {{- toYaml . | nindent 12 }}
           {{- end }}
           securityContext: { runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001 }
+          initContainers:
+            - name: migrate
+              image: {{ include "thread-platform.runtimeImage" . }}
+              command: ["node", "apps/runtime/dist/migrate.js"]
+              envFrom: [{ configMapRef: { name: {{ include "thread-platform.fullname" . }} } }]
+              env:
+                - name: POSTGRES_URL
+                  valueFrom: { secretKeyRef: { name: {{ include "thread-platform.connectionsSecret" . }}, key: {{ ternary "postgres-url" .Values.externalDatabase.urlKey .Values.postgresql.enabled }} } }
+                - { name: REDIS_URL, value: "redis://unused:6379" }
+              securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
           containers:
             - name: reconciler
               image: {{ include "thread-platform.runtimeImage" . }}

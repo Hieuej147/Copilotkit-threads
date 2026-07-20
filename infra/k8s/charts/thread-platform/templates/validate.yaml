@@ -13,6 +13,9 @@
 {{- if and (not .Values.examples.enabled) (not .Values.agent.url) }}
 {{- fail "agent.url is required when examples.enabled=false" }}
 {{- end }}
+{{- if and (ne .Values.auth.mode "development") (eq (len .Values.agent.allowedHosts) 0) }}
+{{- fail "agent.allowedHosts must contain every permitted agent host outside development" }}
+{{- end }}
 {{- if and (eq .Values.auth.mode "jwt") (or (not .Values.auth.jwt.issuer) (not .Values.auth.jwt.audience) (not .Values.auth.jwt.jwksUrl)) }}
 {{- fail "auth.jwt issuer, audience, and jwksUrl are required for auth.mode=jwt" }}
 {{- end }}
