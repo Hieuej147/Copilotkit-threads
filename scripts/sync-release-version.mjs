@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 
 const publicManifest = JSON.parse(await readFile("packages/contracts/package.json", "utf8"));
+const runtimeManifest = JSON.parse(await readFile("apps/runtime/package.json", "utf8"));
 const version = publicManifest.version;
 
 async function updateJson(path, transform) {
@@ -16,8 +17,56 @@ async function replace(path, pattern, replacement) {
   await writeFile(path, updated);
 }
 
-await updateJson("package.json", (value) => { value.version = version; });
-await updateJson("apps/runtime/package.json", (value) => { value.version = version; });
+function releaseType(previousVersion, nextVersion) {
+  const previous = previousVersion.split(".").map(Number);
+  const next = nextVersion.split(".").map(Number);
+
+  if (next[0] !== previous[0]) return "Major";
+  if (next[1] !== previous[1]) return "Minor";
+  return "Patch";
+}
+
+async function updateRuntimeChangelog(path, previousVersion, nextVersion) {
+  let source;
+
+  try {
+    source = await readFile(path, "utf8");
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    source = "# @kiri_ikki/thread-runtime\n";
+  }
+
+  if (source.includes(`\n## ${nextVersion}\n`)) return;
+
+  const title = "# @kiri_ikki/thread-runtime";
+  const existingEntries = source.startsWith(title)
+    ? source.slice(title.length).trim()
+    : source.trim();
+  const entry = [
+    `## ${nextVersion}`,
+    "",
+    `### ${releaseType(previousVersion, nextVersion)} Changes`,
+    "",
+    `- Synchronize the private Runtime deployment artifact with Thread Platform ${nextVersion}.`,
+  ].join("\n");
+
+  await writeFile(
+    path,
+    `${title}\n\n${entry}${existingEntries ? `\n\n${existingEntries}` : ""}\n`,
+  );
+}
+
+await updateJson("package.json", (value) => {
+  value.version = version;
+});
+await updateJson("apps/runtime/package.json", (value) => {
+  value.version = version;
+});
+await updateRuntimeChangelog(
+  "apps/runtime/CHANGELOG.md",
+  runtimeManifest.version,
+  version,
+);
 await updateJson("examples/consumer-starter/web/package.json", (value) => {
   value.dependencies["@kiri_ikki/thread-react"] = version;
 });
