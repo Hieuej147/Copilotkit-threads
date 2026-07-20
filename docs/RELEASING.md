@@ -10,9 +10,10 @@ Public artifacts are:
 
 ## Release flow
 
-The public package manifests intentionally start at `0.0.0`. The checked-in
-changesets keep all four public packages on the same version in the version PR;
-do not edit those versions by hand.
+The four public packages belong to one Changesets fixed group and must stay on
+the same version. Pending changesets determine the next version in the release
+PR; do not edit package versions by hand. The original `0.0.0` manifests were
+bootstrap placeholders and are not the current published version.
 
 1. Add a changeset with `pnpm changeset` in each behavior-changing pull request.
 2. Merge to `main`. `release-pr.yml` maintains a version pull request.
