@@ -98,7 +98,6 @@ thread history.
 - [Agent Contract](docs/AGENT_CONTRACT.md): build and validate an AG-UI agent.
 - [Thread Platform Handbook](docs/THREAD_SERVICE_GUIDE.md): architecture, DB,
   auth, operation, Kubernetes and troubleshooting.
-- [Release Guide](docs/RELEASING.md): publish npm packages and GHCR images.
 - [OpenAPI](docs/openapi.yaml): Thread HTTP API contract.
 
 ## Maintainer checks
