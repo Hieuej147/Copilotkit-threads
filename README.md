@@ -1,12 +1,22 @@
 # Self-hosted CopilotKit Thread Platform
 
-Production-oriented thread infrastructure for CopilotKit and AG-UI agents. It
-owns thread metadata, durable run history, realtime sidebar updates, async
-titles and per-thread concurrency without CopilotKit Cloud.
+Production-oriented thread infrastructure for CopilotKit and AG-UI agents,
+designed primarily for LangGraph and LangChain applications. It owns thread
+metadata, durable run history, realtime sidebar updates, async titles and
+per-thread concurrency without CopilotKit Cloud.
 
-The next major release introduces Thread API `/v3`, a PostgreSQL-backed dynamic
-agent registry, canonical message parts and durable event batching. Thread API
-v2 is removed; see
+## Agent compatibility
+
+LangGraph is the reference integration: expose the compiled graph as an AG-UI
+HTTP endpoint and use the same `threadId` for its PostgreSQL checkpointer.
+LangChain agents that do not use LangGraph must first be wrapped in an AG-UI
+server. Other agent frameworks can also work when they implement the
+[Agent Contract](docs/AGENT_CONTRACT.md); the Thread API itself does not import
+or execute LangChain or LangGraph code.
+
+Version 1 uses Thread API `/v3`, a PostgreSQL-backed dynamic agent registry,
+canonical message parts and durable event batching. Thread API v2 is removed;
+see
 [`docs/V3_MIGRATION.md`](docs/V3_MIGRATION.md).
 
 > [!WARNING]
