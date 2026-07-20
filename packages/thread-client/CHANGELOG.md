@@ -1,5 +1,14 @@
 # @kiri_ikki/thread-client
 
+## 1.0.1
+
+### Patch Changes
+
+- 513f50f: Publish the Runtime image on native amd64 and arm64 GitHub runners to avoid
+  QEMU failures during multi-platform releases.
+- Updated dependencies [513f50f]
+  - @kiri_ikki/thread-contracts@1.0.1
+
 ## 1.0.0
 
 ### Major Changes
