@@ -60,7 +60,7 @@ Run the same image once with
 `node apps/runtime/dist/migrate.js`, continuously with
 `node apps/runtime/dist/title-worker-main.js`, normally for Runtime, and on a
 five-minute schedule with `node apps/runtime/dist/reconcile-main.js`. One
-PostgreSQL database is sufficient: core tables live in `agent_core`; LangGraph
+PostgreSQL database is sufficient: core tables live in `thread_platform`; LangGraph
 owns its checkpoint tables.
 
 Validate the running Thread API:

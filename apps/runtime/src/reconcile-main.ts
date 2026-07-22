@@ -17,8 +17,9 @@ try {
   for (const run of staleRuns) {
     const lockKey = `agent:${config.AGENT_NAMESPACE}:lock:${run.threadId}`;
     if (await redis.exists(lockKey)) continue;
-    await repository.interruptStaleRun(run.id);
-    interrupted += 1;
+    if (await repository.interruptStaleRun(run.id, config.RUN_STALE_AFTER_SECONDS)) {
+      interrupted += 1;
+    }
   }
   const [prunedEvents, prunedTitleJobs, prunedThreadEvents, prunedMessages] = await Promise.all([
     repository.pruneEvents(config.RUN_EVENT_RETENTION_DAYS),

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
-  createBlockingStreamReader,
   createEventNormalizer,
   createThreadEventNormalizer,
   isDurableFlushEvent,
@@ -59,22 +58,18 @@ describe("AG-UI event normalizer", () => {
       type: "RUN_ERROR", message: "upstream closed",
     });
     assert.equal(normalize({ type: "RUN_FINISHED", threadId: "thread", runId: "run" } as never), null);
+    assert.equal(normalize.terminalStatus(), "failed");
+    assert.match(normalize.terminalError()?.message ?? "", /upstream closed/);
+    assert.equal(normalize.validateComplete(), null);
   });
-});
 
-describe("durable stream Redis isolation", () => {
-  it("creates a dedicated connection for blocking XREAD calls", () => {
-    const reader = {};
-    let options: unknown;
-    const redis = {
-      duplicate(value: unknown) {
-        options = value;
-        return reader;
-      },
-    };
+  it("rejects an incomplete or unterminated lifecycle", () => {
+    const unterminated = createEventNormalizer();
+    assert.notEqual(unterminated(textEvent("TEXT_MESSAGE_START", "chat-id", "chat-id")), null);
+    assert.match(unterminated.validateComplete()?.message ?? "", /AGENT_PROTOCOL_ERROR/);
 
-    assert.equal(createBlockingStreamReader(redis as never), reader);
-    assert.deepEqual(options, { maxRetriesPerRequest: null });
+    const missingTerminal = createEventNormalizer();
+    assert.match(missingTerminal.validateComplete()?.message ?? "", /AGENT_PROTOCOL_ERROR/);
   });
 });
 

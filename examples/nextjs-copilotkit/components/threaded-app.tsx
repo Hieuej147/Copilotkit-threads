@@ -6,6 +6,7 @@ import { useCallback, useState } from "react";
 import { ChatPanel, type PendingChatMessage } from "./chat-panel";
 import { DraftChatPanel } from "./draft-chat-panel";
 import { ThreadSidebar } from "./thread-sidebar";
+import { agentId } from "../lib/config";
 
 const runtimeUrl = process.env.NEXT_PUBLIC_RUNTIME_URL ?? "http://localhost:4000/api/copilotkit";
 const threadClient = new ThreadClient({
@@ -14,7 +15,7 @@ const threadClient = new ThreadClient({
 });
 
 export function ThreadedApp() {
-  const manager = useThreadManager({ client: threadClient, agentId: "default" });
+  const manager = useThreadManager({ client: threadClient, agentId });
   const [draftMode, setDraftMode] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [draftError, setDraftError] = useState<Error | null>(null);
@@ -25,7 +26,9 @@ export function ThreadedApp() {
     setDraftError(null);
     setPendingMessage(null);
   }, []);
-  const handleArchive = useCallback((id: string) => void manager.archiveThread(id), [manager.archiveThread]);
+  const handleArchive = useCallback((id: string) => {
+    void manager.archiveThread(id).catch(() => undefined);
+  }, [manager.archiveThread]);
   const handleSelect = useCallback((id: string) => {
     setDraftMode(false);
     setDraftError(null);
@@ -82,7 +85,7 @@ export function ThreadedApp() {
       key={threadId}
       runtimeUrl={runtimeUrl}
       useSingleEndpoint={false}
-      agent="default"
+      agent={agentId}
       threadId={threadId}
     >
       <div className="shell">
@@ -101,6 +104,7 @@ export function ThreadedApp() {
           threadId={threadId}
           pendingMessage={pendingMessage}
           onPendingMessageDispatched={handlePendingMessageDispatched}
+          threadError={manager.error}
         />
       </div>
     </CopilotKit>

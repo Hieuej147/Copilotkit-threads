@@ -11,6 +11,7 @@ from langchain_core.messages import (
 )
 from langgraph.graph.message import add_messages
 from langchain_openai import ChatOpenAI
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
@@ -83,7 +84,7 @@ def json_safe(value: Any) -> Any:
     return value
 
 
-async def chat_node(state: AgentState) -> dict[str, Any]:
+async def chat_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
     frontend_tools = state.get("tools", [])
     ag_ui_state = json_safe(state.get("ag-ui", {}))
     context = state.get("copilotkit", {}).get("context", [])
@@ -102,7 +103,7 @@ async def chat_node(state: AgentState) -> dict[str, Any]:
     )
     messages = repair_tool_history(state["messages"])
     response = await chat_model().bind_tools([*TOOLS, *frontend_tools]).ainvoke(
-        [system, *messages]
+        [system, *messages], config
     )
     return {"messages": [response], "ag-ui": ag_ui_state}
 

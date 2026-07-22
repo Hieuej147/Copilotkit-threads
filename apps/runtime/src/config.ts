@@ -24,7 +24,6 @@ const schema = z.object({
   MESSAGE_RETENTION_DAYS: z.coerce.number().int().positive().default(365),
   RUN_RETENTION_DAYS: z.coerce.number().int().positive().default(365),
   DELETED_THREAD_RETENTION_DAYS: z.coerce.number().int().nonnegative().default(30),
-  REDIS_STREAM_TTL_SECONDS: z.coerce.number().int().positive().default(86400),
   THREAD_LOCK_TTL_SECONDS: z.coerce.number().int().min(30).max(3600).default(120),
   EVENT_BATCH_MAX_DELAY_MS: z.coerce.number().int().min(10).max(1_000).default(50),
   EVENT_BATCH_MAX_SIZE: z.coerce.number().int().min(1).max(1_000).default(32),
@@ -36,6 +35,8 @@ const schema = z.object({
   AUTH_TENANT_HEADER: z.string().min(1).default("x-auth-tenant-id"),
   AUTH_USER_HEADER: z.string().min(1).default("x-auth-user-id"),
   AUTH_ROLES_HEADER: z.string().min(1).default("x-auth-roles"),
+  AUTH_GATEWAY_SECRET_HEADER: z.string().min(1).default("x-thread-platform-gateway-secret"),
+  AUTH_GATEWAY_SECRET: z.string().default(""),
   JWT_ISSUER: z.string().url().optional(),
   JWT_AUDIENCE: z.string().min(1).optional(),
   JWT_JWKS_URL: z.string().url().optional(),
@@ -53,6 +54,13 @@ const schema = z.object({
     for (const key of ["JWT_ISSUER", "JWT_AUDIENCE", "JWT_JWKS_URL"] as const) {
       if (!value[key]) context.addIssue({ code: "custom", path: [key], message: `${key} is required in jwt mode` });
     }
+  }
+  if (value.AUTH_MODE === "gateway" && value.AUTH_GATEWAY_SECRET.length < 32) {
+    context.addIssue({
+      code: "custom",
+      path: ["AUTH_GATEWAY_SECRET"],
+      message: "AUTH_GATEWAY_SECRET must contain at least 32 characters in gateway mode",
+    });
   }
   if (value.AUTH_MODE !== "development" && !value.AGENT_ALLOWED_HOSTS.trim()) {
     context.addIssue({

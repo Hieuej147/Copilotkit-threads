@@ -16,6 +16,9 @@
     "test": "pnpm --filter @kiri_ikki/thread-contracts build && pnpm --filter @kiri_ikki/thread-client build && pnpm --filter @kiri_ikki/thread-react build && pnpm --recursive test",
     "typecheck": "pnpm --filter @kiri_ikki/thread-contracts build && pnpm --filter @kiri_ikki/thread-client build && pnpm --filter @kiri_ikki/thread-react build && pnpm --recursive typecheck",
     "db:migrate": "pnpm --filter @kiri_ikki/thread-runtime db:migrate",
+    "smoke:v4": "node scripts/smoke-v4.mjs",
+    "smoke:v4:multi": "node scripts/smoke-v4-multi-instance.mjs",
+    "test:db:v4": "docker compose exec -T postgres psql -U agent -d agent_threads -f /dev/stdin < infra/postgres/tests/001_v4_invariants.sql",
     "changeset": "changeset",
     "version-packages": "changeset version && node scripts/sync-release-version.mjs",
     "release": "changeset publish"

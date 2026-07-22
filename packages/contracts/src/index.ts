@@ -92,12 +92,45 @@ export const threadEventSchema = z.object({
 });
 
 export const createThreadSchema = z.object({
-  requestId: z.string().uuid(),
   agentId: z.string().min(1).max(100).optional(),
   metadata: z.record(z.string(), z.unknown()).default({}).refine(
     (value) => new TextEncoder().encode(JSON.stringify(value)).byteLength <= 16 * 1024,
     "metadata must not exceed 16 KiB",
   ),
+});
+
+export const idempotencyKeySchema = z.string().trim().min(1).max(128)
+  .regex(/^[\x21-\x7E]+$/, "idempotency key must contain visible ASCII characters only");
+
+export const errorCodeSchema = z.enum([
+  "VALIDATION_ERROR",
+  "INVALID_CURSOR",
+  "AUTH_PRINCIPAL_REQUIRED",
+  "AUTH_TOKEN_INVALID",
+  "RATE_LIMITED",
+  "ADMIN_ROLE_REQUIRED",
+  "AGENT_NOT_FOUND",
+  "THREAD_NOT_FOUND",
+  "THREAD_BUSY",
+  "THREAD_VERSION_REQUIRED",
+  "THREAD_VERSION_CONFLICT",
+  "THREAD_AGENT_MISMATCH",
+  "AGENT_NOT_CONFIGURED",
+  "AGENT_CAPACITY_EXCEEDED",
+  "AGENT_PROTOCOL_ERROR",
+  "AGENT_CONFIGURATION_INVALID",
+  "RUN_CANCELLED",
+  "RUN_INTERRUPTED",
+  "INTERNAL_ERROR",
+]);
+
+export const errorEnvelopeSchema = z.object({
+  error: z.object({
+    code: errorCodeSchema,
+    message: z.string(),
+    requestId: z.string(),
+    details: z.unknown().optional(),
+  }),
 });
 
 const credentialReferenceSchema = z.string().max(512).refine((value) => {
@@ -156,3 +189,5 @@ export type ThreadEventType = z.infer<typeof threadEventTypeSchema>;
 export type MessagePart = z.infer<typeof messagePartSchema>;
 export type AgentDefinition = z.infer<typeof agentDefinitionSchema>;
 export type UpsertAgentDefinition = z.infer<typeof upsertAgentDefinitionSchema>;
+export type ErrorCode = z.infer<typeof errorCodeSchema>;
+export type ErrorEnvelope = z.infer<typeof errorEnvelopeSchema>;

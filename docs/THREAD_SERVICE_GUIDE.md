@@ -8,7 +8,7 @@ the reusable product is Runtime, PostgreSQL migrations, SDKs and Helm chart.
 
 ```mermaid
 flowchart LR
-  UI[Product UI\nCopilotKit + useThreadManager] -->|/v3 threads + SSE| RT[Thread Runtime]
+  UI[Product UI\nCopilotKit + useThreadManager] -->|/v4 threads + SSE| RT[Thread Runtime]
   UI -->|/api/copilotkit AG-UI| RT
   RT -->|AG-UI HTTP, private| AG[Project LangGraph agent]
   RT --> PG[(PostgreSQL)]
@@ -44,11 +44,11 @@ rename closes that job, so later messages never regenerate the title.
 
 Use one PostgreSQL server/database if desired, but keep ownership boundaries:
 
-- `agent_core.*`: owned and migrated by Runtime from `infra/postgres/`.
+- `thread_platform.*`: owned and migrated by Runtime from `infra/postgres/`.
 - LangGraph checkpoint tables: owned by `langgraph-checkpoint-postgres`.
 - Product tables: owned by Prisma, Drizzle or the product's migration tool.
 
-Do not model or migrate `agent_core` or LangGraph tables in Prisma. Reference a
+Do not model or migrate `thread_platform` or LangGraph tables in Prisma. Reference a
 thread from product data with a scalar UUID and optional database foreign key:
 
 ```prisma
@@ -65,7 +65,7 @@ if both services share lifecycle and deployment ownership:
 ALTER TABLE public.support_tickets
   ADD CONSTRAINT support_ticket_thread_fk
   FOREIGN KEY (agent_thread_id)
-  REFERENCES agent_core.agent_threads(id)
+  REFERENCES thread_platform.threads(id)
   ON DELETE SET NULL;
 ```
 
@@ -78,7 +78,7 @@ without coupling schemas:
 
 ```ts
 await manager.createThread({
-  requestId: crypto.randomUUID(),
+  idempotencyKey: crypto.randomUUID(),
   metadata: { entityType: "support_ticket", entityId: ticket.id },
 });
 ```
@@ -93,7 +93,7 @@ metadata is for routing/display context, not authorization.
 1. Build/publish `apps/runtime/Dockerfile`.
 2. Apply the Helm chart or core Compose file.
 3. Set `agent.url` to the project's private AG-UI LangGraph endpoint.
-4. Expose `/api/copilotkit`, `/v3/threads` and `/v3/thread-events` through the
+4. Expose `/api/copilotkit`, `/v4/threads` and `/v4/thread-events` through the
    product gateway.
 5. Give the browser only the gateway URL, never PostgreSQL/Redis/agent URLs.
 
@@ -200,13 +200,13 @@ authentication between Runtime and agent.
 
 ## 6. HTTP API
 
-The only Thread API base path is `/v3`; `/v2` returns 404. CopilotKit package
+The only Thread API base path is `/v4`; `/v2` returns 404. CopilotKit package
 imports ending in `/v2` are unrelated to this HTTP API and must not be changed.
 Full schemas are in `docs/openapi.yaml`.
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/threads` | idempotent create using `requestId` |
+| POST | `/threads` | idempotent create using the `Idempotency-Key` header |
 | GET | `/threads?limit=30&cursor=...` | keyset/lazy list |
 | GET | `/threads/{id}` | thread metadata |
 | GET | `/threads/{id}/messages?after=0` | projected messages for audit/export |
@@ -228,9 +228,9 @@ capacity returns `RUN_ERROR: AGENT_CAPACITY_EXCEEDED`. Scale Runtime horizontall
 Redis coordinates both controls.
 
 Agent registry management is restricted to principals with the
-`thread-platform-admin` role. Use `GET/PUT /v3/admin/agents`, disable instead of
+`thread-platform-admin` role. Use `GET/PUT /v4/admin/agents`, disable instead of
 deleting historical agents, and test connectivity through
-`POST /v3/admin/agents/{agentId}/test`. The same operations are available from
+`POST /v4/admin/agents/{agentId}/test`. The same operations are available from
 `node apps/runtime/dist/agent-admin-cli.js agents ...`. Store only `env:` or
 `file:` credential references and allowlist every agent host.
 
@@ -245,10 +245,14 @@ AUTH_MODE=gateway
 AUTH_TENANT_HEADER=x-auth-tenant-id
 AUTH_USER_HEADER=x-auth-user-id
 AUTH_ROLES_HEADER=x-auth-roles
+AUTH_GATEWAY_SECRET_HEADER=x-thread-platform-gateway-secret
+AUTH_GATEWAY_SECRET=<at-least-32-random-characters>
 ```
 
 The trusted gateway validates the session/JWT, removes inbound spoofed identity
-headers, and injects canonical values. Runtime scopes every thread query by
+and gateway-secret headers, then injects canonical values plus the shared
+secret. Runtime compares that secret in constant time before accepting identity
+headers and scopes every thread query by
 `tenant_id + owner_id + namespace`.
 
 Direct JWT mode:
@@ -288,36 +292,36 @@ AGENT_URL=http://host.docker.internal:8000/agent docker compose up -d
 Inspect PostgreSQL:
 
 ```bash
-docker compose exec postgres psql -U agent -d agent_threads
+docker compose exec postgres psql -U agent -d threads
 ```
 
 ```sql
 SELECT id, tenant_id, owner_id, title, title_status, status, message_count,
        last_activity_at
-FROM agent_core.agent_threads
+FROM thread_platform.threads
 ORDER BY last_activity_at DESC LIMIT 30;
 
 SELECT thread_id, sequence, role, status, left(content::text, 120)
-FROM agent_core.agent_messages ORDER BY created_at DESC LIMIT 50;
+FROM thread_platform.messages ORDER BY created_at DESC LIMIT 50;
 
 SELECT message_id, part_index, part_type, status, left(content::text, 160)
-FROM agent_core.agent_message_parts ORDER BY created_at DESC LIMIT 100;
+FROM thread_platform.message_parts ORDER BY created_at DESC LIMIT 100;
 
 SELECT agent_id, endpoint_url, enabled, timeout_ms, max_concurrent_runs, version
-FROM agent_core.agent_definitions ORDER BY agent_id;
+FROM thread_platform.agents ORDER BY agent_id;
 
 SELECT thread_id, status, attempts, last_error, updated_at
-FROM agent_core.agent_title_jobs ORDER BY created_at DESC LIMIT 30;
+FROM thread_platform.title_jobs ORDER BY created_at DESC LIMIT 30;
 
 SELECT id, event_type, thread_id, created_at
-FROM agent_core.agent_thread_events ORDER BY id DESC LIMIT 50;
+FROM thread_platform.thread_events ORDER BY id DESC LIMIT 50;
 ```
 
 ## 9. Kubernetes
 
 The chart enforces migration ordering in two places:
 
-- On install, Runtime and title-worker pods run the idempotent `agent_core`
+- On install, Runtime and title-worker pods run the idempotent `thread_platform`
   migrator as an init container. The example LangGraph agent does the same for
   checkpoint tables. Application containers cannot become ready first.
 - On upgrade, Helm runs the same migration jobs as `pre-upgrade` hooks before
@@ -358,6 +362,8 @@ kubectl -n threads create secret generic ticketing-redis \
   --from-literal=redis-url='rediss://...'
 kubectl -n threads create secret generic ticketing-title-model \
   --from-literal=TITLE_API_KEY='...'
+kubectl -n threads create secret generic ticketing-runtime \
+  --from-literal=AUTH_GATEWAY_SECRET='...at-least-32-random-characters...'
 ```
 
 Useful commands:
@@ -399,18 +405,17 @@ Before calling a deployment production-ready, provide externally:
 
 ## 11. Backup, retention and recovery
 
-Back up the entire PostgreSQL database so `agent_core` and LangGraph checkpoints
+Back up the entire PostgreSQL database so `thread_platform` and LangGraph checkpoints
 remain consistent. Test restore into an isolated database quarterly. Redis does
 not need to be restored for history; active runs may be marked interrupted by the
 reconciler after lock loss.
 
 `RUN_EVENT_RETENTION_DAYS`, `THREAD_EVENT_RETENTION_DAYS`,
 `TITLE_JOB_RETENTION_DAYS` and `MESSAGE_RETENTION_DAYS` control independent
-retention windows. `REDIS_STREAM_TTL_SECONDS` controls transient AG-UI live stream
-retention. Completed history reconnects from canonical messages/parts; raw run
+retention windows. Completed history reconnects from canonical messages/parts; raw run
 events are short-lived audit and active-run recovery data.
 
-`DELETE /v3/threads/{id}` immediately hides a thread by setting
+`DELETE /v4/threads/{id}` immediately hides a thread by setting
 `status='deleted'` and `deleted_at`. The reconciler physically removes the core
 thread, runs, messages and events after `DELETED_THREAD_RETENTION_DAYS` (30 by
 default, 0 means the next reconciler run). In the bundled same-database topology
@@ -446,7 +451,7 @@ the pinned versions, graceful shutdown, and that UI changes `CopilotKit` key onl
 when changing thread. Historical occurrences in old container logs do not prove
 the current container is failing; use `docker compose logs --since=5m runtime`.
 
-Title remains `New conversation`: inspect `agent_title_jobs`, title-worker logs,
+Title remains `New conversation`: inspect `title_jobs`, title-worker logs,
 `TITLE_API_KEY`, `TITLE_BASE_URL` and model name. Chat remains non-blocking even
 when title generation fails; the job retries and then becomes `fallback`.
 

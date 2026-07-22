@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { AgentAdminClient, ThreadClient } from "../src/index.js";
+import { AgentAdminClient, ThreadApiError, ThreadClient } from "../src/index.js";
 
 const thread = {
   id: "65c823b6-4a31-46e4-9cf8-89ef64394c11",
@@ -34,21 +34,24 @@ describe("ThreadClient", () => {
     });
     const page = await client.list({ limit: 20 });
     assert.equal(page.eventCursor, "42");
-    assert.deepEqual(calls, [{ url: "https://threads.example/v3/threads?limit=20", authorization: "Bearer token" }]);
+    assert.deepEqual(calls, [{ url: "https://threads.example/v4/threads?limit=20", authorization: "Bearer token" }]);
   });
 
-  it("uses caller requestId for idempotent creation", async () => {
+  it("uses the caller idempotency key as a header", async () => {
     let requestBody = "";
+    let idempotencyKey: string | null = null;
     const client = new ThreadClient({
       baseUrl: "https://threads.example",
       fetch: async (_input, init) => {
         requestBody = String(init?.body);
+        idempotencyKey = new Headers(init?.headers).get("idempotency-key");
         return new Response(JSON.stringify(thread), { headers: { "content-type": "application/json" } });
       },
     });
-    const requestId = "83189ec6-b705-44aa-ae18-7f3b763491fa";
-    await client.create({ requestId });
-    assert.equal(JSON.parse(requestBody).requestId, requestId);
+    const key = "83189ec6-b705-44aa-ae18-7f3b763491fa";
+    await client.create({ idempotencyKey: key });
+    assert.equal(idempotencyKey, key);
+    assert.equal(JSON.parse(requestBody).idempotencyKey, undefined);
     assert.deepEqual(JSON.parse(requestBody).metadata, {});
   });
 
@@ -85,10 +88,39 @@ describe("ThreadClient", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it("sends If-Match and exposes the stable error envelope", async () => {
+    let ifMatch: string | null = null;
+    const client = new ThreadClient({
+      baseUrl: "https://threads.example",
+      fetch: async (_input, init) => {
+        ifMatch = new Headers(init?.headers).get("if-match");
+        return new Response(JSON.stringify({
+          error: {
+            code: "THREAD_VERSION_CONFLICT",
+            message: "Thread version is stale",
+            requestId: "request-99",
+          },
+        }), { status: 412, headers: { "content-type": "application/json" } });
+      },
+    });
+    await assert.rejects(
+      client.rename(thread.id, "new title", 7),
+      (error: unknown) => {
+        assert.ok(error instanceof ThreadApiError);
+        assert.equal(error.status, 412);
+        assert.equal(error.code, "THREAD_VERSION_CONFLICT");
+        assert.equal(error.requestId, "request-99");
+        assert.equal(error.message, "Thread version is stale");
+        return true;
+      },
+    );
+    assert.equal(ifMatch, '"7"');
+  });
 });
 
 describe("AgentAdminClient", () => {
-  it("targets the v3 admin API and forwards authentication", async () => {
+  it("targets the v4 admin API and forwards authentication", async () => {
     let request: { url: string; method: string | undefined; authorization: string | null } | undefined;
     const client = new AgentAdminClient({
       baseUrl: "https://threads.example/",
@@ -107,7 +139,7 @@ describe("AgentAdminClient", () => {
     });
     assert.deepEqual(await client.list(), []);
     assert.deepEqual(request, {
-      url: "https://threads.example/v3/admin/agents",
+      url: "https://threads.example/v4/admin/agents",
       method: undefined,
       authorization: "Bearer admin-token",
     });

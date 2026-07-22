@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import type { Redis } from "ioredis";
 import { currentPrincipal } from "./auth.js";
+import { sendError } from "./http-error.js";
 
 export function createRateLimitMiddleware(redis: Redis, requestsPerMinute: number) {
   return (request: Request, response: Response, next: NextFunction): void => {
@@ -18,7 +19,7 @@ export function createRateLimitMiddleware(redis: Redis, requestsPerMinute: numbe
         response.setHeader("X-RateLimit-Remaining", String(Math.max(0, requestsPerMinute - count)));
         if (count > requestsPerMinute) {
           response.setHeader("Retry-After", "60");
-          response.status(429).json({ error: "RATE_LIMITED" });
+          sendError(response, 429, "RATE_LIMITED", "Request rate limit exceeded");
           return;
         }
         next();

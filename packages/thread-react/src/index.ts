@@ -1,10 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ThreadClient,
+  ThreadApiError,
   type AgentThread,
   type CreateThreadOptions,
   type ThreadEvent,
 } from "@kiri_ikki/thread-client";
+
+async function mutateLatest<T>(
+  client: ThreadClient,
+  threadId: string,
+  mutation: (version: number) => Promise<T>,
+): Promise<T> {
+  const current = await client.get(threadId);
+  try {
+    return await mutation(current.version);
+  } catch (cause) {
+    if (!(cause instanceof ThreadApiError) || cause.status !== 412) throw cause;
+    const refreshed = await client.get(threadId);
+    return mutation(refreshed.version);
+  }
+}
 
 export type UseThreadManagerOptions = {
   client: ThreadClient;
@@ -122,22 +138,47 @@ export function useThreadManager({
   }, [agentId, client]);
 
   const renameThread = useCallback(async (threadId: string, title: string) => {
-    const thread = await client.rename(threadId, title);
-    setThreads((current) => sortThreads([thread, ...current.filter((item) => item.id !== thread.id)]));
-    return thread;
-  }, [client]);
+    try {
+      const thread = await mutateLatest(client, threadId, (version) =>
+        client.rename(threadId, title, version));
+      setThreads((current) => sortThreads([thread, ...current.filter((item) => item.id !== thread.id)]));
+      setError(null);
+      return thread;
+    } catch (cause) {
+      const failure = cause instanceof Error ? cause : new Error(String(cause));
+      await loadInitial();
+      setError(failure);
+      throw failure;
+    }
+  }, [client, loadInitial]);
 
   const archiveThread = useCallback(async (threadId: string) => {
-    await client.archive(threadId);
-    setThreads((current) => current.filter((thread) => thread.id !== threadId));
-    setSelectedThreadId((selected) => selected === threadId ? null : selected);
-  }, [client]);
+    try {
+      await mutateLatest(client, threadId, (version) => client.archive(threadId, version));
+      setThreads((current) => current.filter((thread) => thread.id !== threadId));
+      setSelectedThreadId((selected) => selected === threadId ? null : selected);
+      setError(null);
+    } catch (cause) {
+      const failure = cause instanceof Error ? cause : new Error(String(cause));
+      await loadInitial();
+      setError(failure);
+      throw failure;
+    }
+  }, [client, loadInitial]);
 
   const deleteThread = useCallback(async (threadId: string) => {
-    await client.delete(threadId);
-    setThreads((current) => current.filter((thread) => thread.id !== threadId));
-    setSelectedThreadId((selected) => selected === threadId ? null : selected);
-  }, [client]);
+    try {
+      await mutateLatest(client, threadId, (version) => client.delete(threadId, version));
+      setThreads((current) => current.filter((thread) => thread.id !== threadId));
+      setSelectedThreadId((selected) => selected === threadId ? null : selected);
+      setError(null);
+    } catch (cause) {
+      const failure = cause instanceof Error ? cause : new Error(String(cause));
+      await loadInitial();
+      setError(failure);
+      throw failure;
+    }
+  }, [client, loadInitial]);
 
   return {
     threads,

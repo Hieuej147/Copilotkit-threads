@@ -15,7 +15,7 @@ import type {
   ThreadRecord,
   TitleJobRecord,
 } from "./types.js";
-import { currentPrincipal } from "./auth.js";
+import type { Principal } from "./auth.js";
 import type { AgentRegistry } from "./ports.js";
 
 type ThreadRow = {
@@ -86,7 +86,7 @@ export class ThreadRepository {
     principal: { tenantId: string; userId: string },
   ): Promise<PublishedThreadEvent> {
     const result = await client.query<ThreadEventRow>(
-      `INSERT INTO agent_core.agent_thread_events
+      `INSERT INTO thread_platform.thread_events
          (thread_id, tenant_id, owner_id, namespace, event_type, payload)
        VALUES ($1, $2, $3, $4, $5, $6::jsonb)
        RETURNING id::text, event_type, payload, created_at, tenant_id, owner_id`,
@@ -113,11 +113,11 @@ export class ThreadRepository {
   }
 
   async createThread(
-    requestId: string,
+    principal: Principal,
+    idempotencyKey: string,
     agentId = this.defaultAgentId,
     metadata: Record<string, unknown> = {},
   ): Promise<{ thread: ThreadRecord; event: PublishedThreadEvent | null; created: boolean }> {
-    const principal = currentPrincipal();
     if (this.agentRegistry) {
       const agent = await this.agentRegistry.get(agentId);
       if (!agent?.enabled) throw new Error("AGENT_NOT_CONFIGURED");
@@ -128,22 +128,22 @@ export class ThreadRepository {
     try {
       await client.query("BEGIN");
       const existing = await client.query<ThreadRow>(
-        `SELECT * FROM agent_core.agent_threads
+        `SELECT * FROM thread_platform.threads
          WHERE namespace = $1 AND tenant_id = $2 AND owner_id = $3
            AND creation_request_id = $4`,
-        [this.namespace, principal.tenantId, principal.userId, requestId],
+        [this.namespace, principal.tenantId, principal.userId, idempotencyKey],
       );
       if (existing.rows[0]) {
         await client.query("COMMIT");
         return { thread: mapThread(existing.rows[0]), event: null, created: false };
       }
       const result = await client.query<ThreadRow>(
-        `INSERT INTO agent_core.agent_threads
+        `INSERT INTO thread_platform.threads
            (id, namespace, agent_id, tenant_id, owner_id, creation_request_id, metadata)
          VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
          RETURNING *`,
         [randomUUID(), this.namespace, agentId, principal.tenantId, principal.userId,
-          requestId, JSON.stringify(metadata)],
+          idempotencyKey, JSON.stringify(metadata)],
       );
       const thread = mapThread(result.rows[0]!);
       const event = await this.appendThreadEvent(client, thread, "thread.created", principal);
@@ -153,10 +153,10 @@ export class ThreadRepository {
       await client.query("ROLLBACK");
       if ((error as { code?: string }).code === "23505") {
         const result = await this.pool.query<ThreadRow>(
-          `SELECT * FROM agent_core.agent_threads
+          `SELECT * FROM thread_platform.threads
            WHERE namespace = $1 AND tenant_id = $2 AND owner_id = $3
              AND creation_request_id = $4`,
-          [this.namespace, principal.tenantId, principal.userId, requestId],
+          [this.namespace, principal.tenantId, principal.userId, idempotencyKey],
         );
         if (result.rows[0]) return { thread: mapThread(result.rows[0]), event: null, created: false };
       }
@@ -166,10 +166,9 @@ export class ThreadRepository {
     }
   }
 
-  async getThread(threadId: string): Promise<ThreadRecord | null> {
-    const principal = currentPrincipal();
+  async getThread(principal: Principal, threadId: string): Promise<ThreadRecord | null> {
     const result = await this.pool.query<ThreadRow>(
-      `SELECT * FROM agent_core.agent_threads
+      `SELECT * FROM thread_platform.threads
        WHERE id = $1 AND namespace = $2 AND tenant_id = $3 AND owner_id = $4
          AND deleted_at IS NULL`,
       [threadId, this.namespace, principal.tenantId, principal.userId],
@@ -179,25 +178,24 @@ export class ThreadRepository {
 
   async getThreadInternal(threadId: string): Promise<ThreadRecord | null> {
     const result = await this.pool.query<ThreadRow>(
-      `SELECT * FROM agent_core.agent_threads
+      `SELECT * FROM thread_platform.threads
        WHERE id = $1 AND namespace = $2 AND deleted_at IS NULL`,
       [threadId, this.namespace],
     );
     return result.rows[0] ? mapThread(result.rows[0]) : null;
   }
 
-  async listThreads(options: {
+  async listThreads(principal: Principal, options: {
     agentId?: string;
     status?: "active" | "archived";
     limit: number;
     before?: { at: string; id: string };
   }): Promise<{ items: ThreadRecord[]; nextCursor: string | null; eventCursor: string }> {
-    const principal = currentPrincipal();
     // Capture the event boundary before reading rows. A concurrent event may be
     // returned both in this snapshot and SSE replay, but can never be missed.
     const eventBoundary = await this.pool.query<{ id: string }>(
       `SELECT COALESCE(MAX(id), 0)::text AS id
-       FROM agent_core.agent_thread_events
+       FROM thread_platform.thread_events
        WHERE tenant_id = $1 AND owner_id = $2 AND namespace = $3`,
       [principal.tenantId, principal.userId, this.namespace],
     );
@@ -212,7 +210,7 @@ export class ThreadRepository {
       cursorClause = "AND (last_activity_at, id) < ($7::timestamptz, $8::uuid)";
     }
     const result = await this.pool.query<ThreadRow>(
-      `SELECT * FROM agent_core.agent_threads
+      `SELECT * FROM thread_platform.threads
        WHERE namespace = $1 AND tenant_id = $2 AND owner_id = $3
          AND agent_id = $4 AND status = $5 AND deleted_at IS NULL
        ${cursorClause}
@@ -234,24 +232,34 @@ export class ThreadRepository {
   }
 
   async setStatus(
+    principal: Principal,
     threadId: string,
     status: "active" | "archived" | "deleted",
+    expectedVersion: number,
   ): Promise<{ thread: ThreadRecord; event: PublishedThreadEvent } | null> {
-    const principal = currentPrincipal();
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
       const result = await client.query<ThreadRow>(
-        `UPDATE agent_core.agent_threads
+        `UPDATE thread_platform.threads
          SET status = $5::text,
              deleted_at = CASE WHEN $5::text = 'deleted' THEN now() ELSE NULL END,
              updated_at = now(), version = version + 1
          WHERE id = $1 AND namespace = $2 AND tenant_id = $3 AND owner_id = $4
-           AND deleted_at IS NULL
+           AND deleted_at IS NULL AND version = $6
          RETURNING *`,
-        [threadId, this.namespace, principal.tenantId, principal.userId, status],
+        [threadId, this.namespace, principal.tenantId, principal.userId, status, expectedVersion],
       );
       if (!result.rows[0]) {
+        const exists = Boolean((await client.query(
+          `SELECT 1 FROM thread_platform.threads
+           WHERE id = $1 AND namespace = $2 AND tenant_id = $3 AND owner_id = $4
+             AND deleted_at IS NULL`,
+          [threadId, this.namespace, principal.tenantId, principal.userId],
+        )).rowCount);
+        if (exists) {
+          throw new Error("THREAD_VERSION_CONFLICT");
+        }
         await client.query("COMMIT");
         return null;
       }
@@ -271,28 +279,38 @@ export class ThreadRepository {
   }
 
   async renameThread(
+    principal: Principal,
     threadId: string,
     title: string,
+    expectedVersion: number,
   ): Promise<{ thread: ThreadRecord; event: PublishedThreadEvent } | null> {
-    const principal = currentPrincipal();
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
       const result = await client.query<ThreadRow>(
-        `UPDATE agent_core.agent_threads
+        `UPDATE thread_platform.threads
          SET title = $5, title_status = 'manual', title_model = NULL,
              updated_at = now(), version = version + 1
          WHERE id = $1 AND namespace = $2 AND tenant_id = $3 AND owner_id = $4
-           AND deleted_at IS NULL
+           AND deleted_at IS NULL AND version = $6
          RETURNING *`,
-        [threadId, this.namespace, principal.tenantId, principal.userId, title],
+        [threadId, this.namespace, principal.tenantId, principal.userId, title, expectedVersion],
       );
       if (!result.rows[0]) {
+        const exists = Boolean((await client.query(
+          `SELECT 1 FROM thread_platform.threads
+           WHERE id = $1 AND namespace = $2 AND tenant_id = $3 AND owner_id = $4
+             AND deleted_at IS NULL`,
+          [threadId, this.namespace, principal.tenantId, principal.userId],
+        )).rowCount);
+        if (exists) {
+          throw new Error("THREAD_VERSION_CONFLICT");
+        }
         await client.query("COMMIT");
         return null;
       }
       await client.query(
-        `UPDATE agent_core.agent_title_jobs
+        `UPDATE thread_platform.title_jobs
          SET status = 'completed', completed_at = now(), locked_at = NULL,
              locked_by = NULL, updated_at = now()
          WHERE thread_id = $1 AND status IN ('pending', 'running')`,
@@ -310,14 +328,18 @@ export class ThreadRepository {
     }
   }
 
-  async beginRun(input: BeginRunInput): Promise<{ run: RunRecord; titleRequired: boolean }> {
-    const principal = currentPrincipal();
+  async beginRun(input: BeginRunInput): Promise<{
+    run: RunRecord;
+    titleRequired: boolean;
+    created: boolean;
+  }> {
+    const principal = input.principal;
     const agentDefinition = await this.agentRegistry?.get(input.agentId);
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
       const threadResult = await client.query<ThreadRow>(
-        `SELECT * FROM agent_core.agent_threads
+        `SELECT * FROM thread_platform.threads
          WHERE id = $1 AND namespace = $2 AND tenant_id = $3 AND owner_id = $4
            AND status = 'active' AND deleted_at IS NULL
          FOR UPDATE`,
@@ -326,6 +348,35 @@ export class ThreadRepository {
       const thread = threadResult.rows[0];
       if (!thread) throw new Error("THREAD_NOT_FOUND");
       if (thread.agent_id !== input.agentId) throw new Error("THREAD_AGENT_MISMATCH");
+      const existing = await client.query<{
+        id: string;
+        thread_id: string;
+        last_event_seq: string;
+        status: string;
+        fencing_token: string;
+      }>(
+        `SELECT id, thread_id, last_event_seq, status, fencing_token
+         FROM thread_platform.runs
+         WHERE thread_id = $1 AND client_request_id = $2
+         FOR UPDATE`,
+        [input.threadId, input.runId],
+      );
+      if (existing.rows[0]) {
+        const row = existing.rows[0];
+        if (row.status === "queued" || row.status === "running") throw new Error("THREAD_BUSY");
+        await client.query("COMMIT");
+        return {
+          run: {
+            id: row.id,
+            threadId: row.thread_id,
+            lastEventSeq: Number(row.last_event_seq),
+            status: row.status,
+            fencingToken: Number(row.fencing_token),
+          },
+          titleRequired: false,
+          created: false,
+        };
+      }
       const firstInput = input.messages.find((message) => message.role === "user");
 
       // `pending` is the only state allowed to create the durable title job.
@@ -335,19 +386,19 @@ export class ThreadRepository {
         && (agentDefinition?.titleEnabled ?? true);
       if (thread.title_status === "pending" && agentDefinition?.titleEnabled === false) {
         await client.query(
-          `UPDATE agent_core.agent_threads SET title_status = 'fallback', updated_at = now() WHERE id = $1`,
+          `UPDATE thread_platform.threads SET title_status = 'fallback', updated_at = now() WHERE id = $1`,
           [input.threadId],
         );
       }
       if (titleRequired) {
         await client.query(
-          `UPDATE agent_core.agent_threads
+          `UPDATE thread_platform.threads
            SET title_status = 'generating', updated_at = now()
            WHERE id = $1`,
           [input.threadId],
         );
         await client.query(
-          `INSERT INTO agent_core.agent_title_jobs (id, thread_id, source)
+          `INSERT INTO thread_platform.title_jobs (id, thread_id, source)
            VALUES ($1, $2, $3)
            ON CONFLICT (thread_id) DO NOTHING`,
           [randomUUID(), input.threadId, firstInput ? messageText(firstInput) : ""],
@@ -355,15 +406,21 @@ export class ThreadRepository {
       }
 
       await client.query(
-        `INSERT INTO agent_core.agent_runs
-           (id, thread_id, agent_id, client_request_id, input_message_id, status, started_at)
-         VALUES ($1, $2, $3, $4, $5, 'running', now())`,
-        [input.runId, input.threadId, input.agentId, input.runId, firstInput?.id ?? null],
+        `INSERT INTO thread_platform.runs
+           (id, thread_id, agent_id, client_request_id, input_message_id, status,
+            fencing_token, heartbeat_at, started_at)
+         VALUES ($1, $2, $3, $4, $5, 'running', $6, now(), now())`,
+        [input.runId, input.threadId, input.agentId, input.runId,
+          firstInput?.id ?? null, input.fencingToken],
+      );
+      await client.query(
+        `UPDATE thread_platform.threads SET active_fencing_token = $2 WHERE id = $1`,
+        [input.threadId, input.fencingToken],
       );
 
       let sequenceResult = await client.query<{ next: string }>(
         `SELECT COALESCE(MAX(sequence), 0) + 1 AS next
-         FROM agent_core.agent_messages WHERE thread_id = $1`,
+         FROM thread_platform.messages WHERE thread_id = $1`,
         [input.threadId],
       );
       let sequence = Number(sequenceResult.rows[0]!.next);
@@ -380,7 +437,7 @@ export class ThreadRepository {
         const text = messageText(message);
         const serializedContent = JSON.stringify(message.content ?? "");
         const inserted = await client.query(
-          `INSERT INTO agent_core.agent_messages
+          `INSERT INTO thread_platform.messages
              (id, thread_id, run_id, sequence, role, content, status)
            VALUES ($1, $2, $3, $4, $5, $6::jsonb, 'completed')
            ON CONFLICT (thread_id, id) DO NOTHING`,
@@ -388,7 +445,7 @@ export class ThreadRepository {
         );
         if (inserted.rowCount) {
           await client.query(
-            `INSERT INTO agent_core.agent_message_parts
+            `INSERT INTO thread_platform.message_parts
                (thread_id, message_id, part_index, part_type, content, status, tool_call_id)
              VALUES ($1, $2, 0, $3, $4::jsonb, 'completed', $5)
              ON CONFLICT (thread_id, message_id, part_index) DO NOTHING`,
@@ -404,7 +461,7 @@ export class ThreadRepository {
       }
       if (insertedCount > 0) {
         await client.query(
-          `UPDATE agent_core.agent_threads
+          `UPDATE thread_platform.threads
            SET message_count = message_count + $2,
                last_message_preview = COALESCE($3, last_message_preview),
                last_activity_at = now(), updated_at = now(), version = version + 1
@@ -414,8 +471,15 @@ export class ThreadRepository {
       }
       await client.query("COMMIT");
       return {
-        run: { id: input.runId, threadId: input.threadId, lastEventSeq: 0, status: "running" },
+        run: {
+          id: input.runId,
+          threadId: input.threadId,
+          lastEventSeq: 0,
+          status: "running",
+          fencingToken: input.fencingToken,
+        },
         titleRequired,
+        created: true,
       };
     } catch (error) {
       await client.query("ROLLBACK");
@@ -430,13 +494,24 @@ export class ThreadRepository {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      const writable = await client.query<{ last_event_seq: string }>(
+        `SELECT r.last_event_seq
+         FROM thread_platform.runs r
+         JOIN thread_platform.threads t ON t.id = r.thread_id
+         WHERE r.id = $1 AND r.thread_id = $2 AND r.fencing_token = $3
+           AND t.active_fencing_token = $3 AND r.status IN ('queued', 'running')
+         FOR UPDATE OF r`,
+        [run.id, run.threadId, run.fencingToken],
+      );
+      if (!writable.rows[0]) throw new Error("RUN_FENCE_LOST");
+      run.lastEventSeq = Number(writable.rows[0].last_event_seq);
       const entries = events.map((event, index) => ({
         sequence: run.lastEventSeq + index + 1,
         eventType: String(event.type),
         payload: event,
       }));
       const inserted = await client.query<{ sequence: string }>(
-        `INSERT INTO agent_core.agent_run_events
+        `INSERT INTO thread_platform.run_events
            (run_id, sequence, thread_id, event_type, payload)
          SELECT $1, entry.sequence, $2, entry.event_type, entry.payload
          FROM jsonb_to_recordset($3::jsonb)
@@ -476,9 +551,9 @@ export class ThreadRepository {
       }
       const sequence = entries.at(-1)!.sequence;
       await client.query(
-        `UPDATE agent_core.agent_runs SET last_event_seq = GREATEST(last_event_seq, $2)
-         WHERE id = $1`,
-        [run.id, sequence],
+        `UPDATE thread_platform.runs SET last_event_seq = GREATEST(last_event_seq, $2)
+         WHERE id = $1 AND fencing_token = $3`,
+        [run.id, sequence, run.fencingToken],
       );
       await client.query("COMMIT");
       run.lastEventSeq = sequence;
@@ -501,11 +576,11 @@ export class ThreadRepository {
     if (event.type === "TEXT_MESSAGE_START") {
       const sequenceResult = await client.query<{ next: string }>(
         `SELECT COALESCE(MAX(sequence), 0) + 1 AS next
-         FROM agent_core.agent_messages WHERE thread_id = $1`,
+         FROM thread_platform.messages WHERE thread_id = $1`,
         [run.threadId],
       );
       await client.query(
-        `INSERT INTO agent_core.agent_messages
+        `INSERT INTO thread_platform.messages
            (id, thread_id, run_id, sequence, role, content, status, parent_message_id)
          VALUES ($1, $2, $3, $4, $5, '""'::jsonb, 'streaming', $6)
          ON CONFLICT (thread_id, id) DO NOTHING`,
@@ -519,7 +594,7 @@ export class ThreadRepository {
         ],
       );
       await client.query(
-        `INSERT INTO agent_core.agent_message_parts
+        `INSERT INTO thread_platform.message_parts
            (thread_id, message_id, part_index, part_type, content, status)
          VALUES ($1, $2, 0, 'text', '""'::jsonb, 'streaming')
          ON CONFLICT (thread_id, message_id, part_index) DO NOTHING`,
@@ -527,33 +602,33 @@ export class ThreadRepository {
       );
     } else if (event.type === "TEXT_MESSAGE_CONTENT") {
       await client.query(
-        `UPDATE agent_core.agent_messages
+        `UPDATE thread_platform.messages
          SET content = to_jsonb(COALESCE(content #>> '{}', '') || $3::text), updated_at = now()
          WHERE thread_id = $1 AND id = $2`,
         [run.threadId, value.messageId, String(value.delta ?? "")],
       );
       await client.query(
-        `UPDATE agent_core.agent_message_parts
+        `UPDATE thread_platform.message_parts
          SET content = to_jsonb(COALESCE(content #>> '{}', '') || $3::text), updated_at = now()
          WHERE thread_id = $1 AND message_id = $2 AND part_index = 0`,
         [run.threadId, value.messageId, String(value.delta ?? "")],
       );
     } else if (event.type === "TEXT_MESSAGE_END") {
       const completed = await client.query<{ preview: string }>(
-        `UPDATE agent_core.agent_messages
+        `UPDATE thread_platform.messages
          SET status = 'completed', updated_at = now()
          WHERE thread_id = $1 AND id = $2
          RETURNING LEFT(content #>> '{}', 240) AS preview`,
         [run.threadId, value.messageId],
       );
       await client.query(
-        `UPDATE agent_core.agent_message_parts SET status = 'completed', updated_at = now()
+        `UPDATE thread_platform.message_parts SET status = 'completed', updated_at = now()
          WHERE thread_id = $1 AND message_id = $2 AND part_index = 0`,
         [run.threadId, value.messageId],
       );
       if (completed.rowCount) {
         await client.query(
-          `UPDATE agent_core.agent_threads
+          `UPDATE thread_platform.threads
            SET message_count = message_count + 1,
                last_message_preview = COALESCE($2, last_message_preview),
                last_activity_at = now(), updated_at = now(), version = version + 1
@@ -566,11 +641,11 @@ export class ThreadRepository {
       if (!toolCallId) return;
       const messageId = `tool-call:${toolCallId}`;
       const sequenceResult = await client.query<{ next: string }>(
-        `SELECT COALESCE(MAX(sequence), 0) + 1 AS next FROM agent_core.agent_messages WHERE thread_id = $1`,
+        `SELECT COALESCE(MAX(sequence), 0) + 1 AS next FROM thread_platform.messages WHERE thread_id = $1`,
         [run.threadId],
       );
       await client.query(
-        `INSERT INTO agent_core.agent_messages
+        `INSERT INTO thread_platform.messages
            (id, thread_id, run_id, sequence, role, kind, content, status, tool_call_id, parent_message_id)
          VALUES ($1,$2,$3,$4,'assistant','tool_call',$5::jsonb,'streaming',$6,$7)
          ON CONFLICT (thread_id, id) DO NOTHING`,
@@ -579,7 +654,7 @@ export class ThreadRepository {
           value.parentMessageId ?? null],
       );
       await client.query(
-        `INSERT INTO agent_core.agent_message_parts
+        `INSERT INTO thread_platform.message_parts
            (thread_id, message_id, part_index, part_type, content, status, tool_call_id)
          VALUES ($1,$2,0,'tool_call',$3::jsonb,'streaming',$4)
          ON CONFLICT (thread_id, message_id, part_index) DO NOTHING`,
@@ -589,7 +664,7 @@ export class ThreadRepository {
       const toolCallId = String(value.toolCallId ?? "");
       const messageId = `tool-call:${toolCallId}`;
       await client.query(
-        `UPDATE agent_core.agent_message_parts
+        `UPDATE thread_platform.message_parts
          SET content = jsonb_set(content, '{args}', to_jsonb(COALESCE(content->>'args','') || $3::text)), updated_at = now()
          WHERE thread_id = $1 AND message_id = $2 AND part_index = 0`,
         [run.threadId, messageId, String(value.delta ?? "")],
@@ -598,13 +673,13 @@ export class ThreadRepository {
       const toolCallId = String(value.toolCallId ?? "");
       const messageId = `tool-call:${toolCallId}`;
       await client.query(
-        `UPDATE agent_core.agent_message_parts SET status = 'completed', updated_at = now()
+        `UPDATE thread_platform.message_parts SET status = 'completed', updated_at = now()
          WHERE thread_id = $1 AND message_id = $2 AND part_index = 0`,
         [run.threadId, messageId],
       );
       await client.query(
-        `UPDATE agent_core.agent_messages m SET content = p.content, status = 'completed', updated_at = now()
-         FROM agent_core.agent_message_parts p
+        `UPDATE thread_platform.messages m SET content = p.content, status = 'completed', updated_at = now()
+         FROM thread_platform.message_parts p
          WHERE m.thread_id = $1 AND m.id = $2 AND p.thread_id = m.thread_id
            AND p.message_id = m.id AND p.part_index = 0`,
         [run.threadId, messageId],
@@ -613,19 +688,19 @@ export class ThreadRepository {
       const toolCallId = String(value.toolCallId ?? "");
       const messageId = String(value.messageId ?? `tool-result:${toolCallId}`);
       const sequenceResult = await client.query<{ next: string }>(
-        `SELECT COALESCE(MAX(sequence), 0) + 1 AS next FROM agent_core.agent_messages WHERE thread_id = $1`,
+        `SELECT COALESCE(MAX(sequence), 0) + 1 AS next FROM thread_platform.messages WHERE thread_id = $1`,
         [run.threadId],
       );
       const content = value.content ?? value.result ?? null;
       await client.query(
-        `INSERT INTO agent_core.agent_messages
+        `INSERT INTO thread_platform.messages
            (id, thread_id, run_id, sequence, role, kind, content, status, tool_call_id)
          VALUES ($1,$2,$3,$4,'tool','tool_result',$5::jsonb,'completed',$6)
          ON CONFLICT (thread_id, id) DO NOTHING`,
         [messageId, run.threadId, run.id, Number(sequenceResult.rows[0]!.next), JSON.stringify(content), toolCallId],
       );
       await client.query(
-        `INSERT INTO agent_core.agent_message_parts
+        `INSERT INTO thread_platform.message_parts
            (thread_id, message_id, part_index, part_type, content, status, tool_call_id)
          VALUES ($1,$2,0,'tool_result',$3::jsonb,'completed',$4)
          ON CONFLICT (thread_id, message_id, part_index) DO NOTHING`,
@@ -637,18 +712,18 @@ export class ThreadRepository {
       const partType = customName.includes("interrupt") || customName.includes("human_in_the_loop")
         ? "interrupt" : "activity";
       const sequenceResult = await client.query<{ next: string }>(
-        `SELECT COALESCE(MAX(sequence), 0) + 1 AS next FROM agent_core.agent_messages WHERE thread_id = $1`,
+        `SELECT COALESCE(MAX(sequence), 0) + 1 AS next FROM thread_platform.messages WHERE thread_id = $1`,
         [run.threadId],
       );
       await client.query(
-        `INSERT INTO agent_core.agent_messages
+        `INSERT INTO thread_platform.messages
            (id, thread_id, run_id, sequence, role, kind, content, status)
          VALUES ($1,$2,$3,$4,'system','activity',$5::jsonb,'completed')
          ON CONFLICT (thread_id, id) DO NOTHING`,
         [messageId, run.threadId, run.id, Number(sequenceResult.rows[0]!.next), JSON.stringify(event)],
       );
       await client.query(
-        `INSERT INTO agent_core.agent_message_parts
+        `INSERT INTO thread_platform.message_parts
            (thread_id, message_id, part_index, part_type, content, status)
          VALUES ($1,$2,0,$3,$4::jsonb,'completed')
          ON CONFLICT (thread_id, message_id, part_index) DO NOTHING`,
@@ -659,7 +734,7 @@ export class ThreadRepository {
         ? `${event.type}:${String(value.messageId ?? value.activityType ?? "default")}`
         : event.type;
       await client.query(
-        `INSERT INTO agent_core.agent_run_snapshots (run_id, thread_id, snapshot_key, event_type, payload)
+        `INSERT INTO thread_platform.run_snapshots (run_id, thread_id, snapshot_key, event_type, payload)
          VALUES ($1,$2,$3,$4,$5::jsonb)
          ON CONFLICT (run_id, snapshot_key) DO UPDATE SET
            event_type = EXCLUDED.event_type, payload = EXCLUDED.payload, updated_at = now()`,
@@ -668,28 +743,30 @@ export class ThreadRepository {
     }
   }
 
-  async finishRun(runId: string, status: "completed" | "failed" | "cancelled" | "interrupted", error?: Error): Promise<void> {
+  async finishRun(run: RunRecord, status: "completed" | "failed" | "cancelled" | "interrupted", error?: Error): Promise<void> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      await client.query(
-        `UPDATE agent_core.agent_runs
+      const finished = await client.query(
+        `UPDATE thread_platform.runs r
          SET status = $2, finished_at = now(), error_code = $3, error_detail = $4
-         WHERE id = $1 AND status IN ('queued', 'running')`,
-        [runId, status, error?.name ?? null, error?.message.slice(0, 2000) ?? null],
+         FROM thread_platform.threads t
+         WHERE r.id = $1 AND r.thread_id = t.id AND r.fencing_token = $5
+           AND t.active_fencing_token = $5 AND r.status IN ('queued', 'running')`,
+        [run.id, status, error?.name ?? null, error?.message.slice(0, 2000) ?? null, run.fencingToken],
       );
-      if (status !== "completed") {
+      if (finished.rowCount && status !== "completed") {
         await client.query(
-          `UPDATE agent_core.agent_messages SET status = 'failed', updated_at = now()
+          `UPDATE thread_platform.messages SET status = 'failed', updated_at = now()
            WHERE run_id = $1 AND status = 'streaming'`,
-          [runId],
+          [run.id],
         );
         await client.query(
-          `UPDATE agent_core.agent_message_parts p SET status = 'failed', updated_at = now()
-           FROM agent_core.agent_messages m
+          `UPDATE thread_platform.message_parts p SET status = 'failed', updated_at = now()
+           FROM thread_platform.messages m
            WHERE m.run_id = $1 AND p.thread_id = m.thread_id AND p.message_id = m.id
              AND p.status = 'streaming'`,
-          [runId],
+          [run.id],
         );
       }
       await client.query("COMMIT");
@@ -710,7 +787,7 @@ export class ThreadRepository {
     try {
       await client.query("BEGIN");
       const result = await client.query<ThreadRow & { tenant_id: string; owner_id: string }>(
-        `UPDATE agent_core.agent_threads
+        `UPDATE thread_platform.threads
          SET title = $3, title_status = 'generated', title_model = $4,
              updated_at = now(), version = version + 1
          WHERE id = $1 AND namespace = $2 AND title_status = 'generating'
@@ -749,8 +826,8 @@ export class ThreadRepository {
         source: string;
       }>(
         `SELECT j.id, j.thread_id, t.agent_id, j.source
-         FROM agent_core.agent_title_jobs j
-         JOIN agent_core.agent_threads t ON t.id = j.thread_id
+         FROM thread_platform.title_jobs j
+         JOIN thread_platform.threads t ON t.id = j.thread_id
          WHERE t.namespace = $1 AND (
            (j.status = 'pending' AND j.available_at <= now()) OR
            (j.status = 'running' AND j.locked_at < now() - ($2::text || ' milliseconds')::interval)
@@ -766,7 +843,7 @@ export class ThreadRepository {
         return null;
       }
       const claimed = await client.query<{ attempts: number }>(
-        `UPDATE agent_core.agent_title_jobs
+        `UPDATE thread_platform.title_jobs
          SET status = 'running', attempts = attempts + 1, locked_at = now(),
              locked_by = $2, updated_at = now()
          WHERE id = $1
@@ -791,7 +868,7 @@ export class ThreadRepository {
 
   async completeTitleJob(jobId: string): Promise<void> {
     await this.pool.query(
-      `UPDATE agent_core.agent_title_jobs
+      `UPDATE thread_platform.title_jobs
        SET status = 'completed', completed_at = now(), locked_at = NULL,
            locked_by = NULL, updated_at = now()
        WHERE id = $1 AND status = 'running'`,
@@ -804,7 +881,7 @@ export class ThreadRepository {
     try {
       await client.query("BEGIN");
       await client.query(
-        `UPDATE agent_core.agent_title_jobs
+        `UPDATE thread_platform.title_jobs
          SET status = CASE WHEN $2 THEN 'dead' ELSE 'pending' END,
              available_at = CASE WHEN $2 THEN available_at
                ELSE now() + make_interval(secs => LEAST(60, power(2, attempts)::integer)) END,
@@ -814,7 +891,7 @@ export class ThreadRepository {
       );
       if (final) {
         await client.query(
-          `UPDATE agent_core.agent_threads
+          `UPDATE thread_platform.threads
            SET title_status = 'fallback', updated_at = now()
            WHERE id = $1 AND namespace = $2 AND title_status = 'generating'`,
           [threadId, this.namespace],
@@ -829,8 +906,7 @@ export class ThreadRepository {
     }
   }
 
-  async loadEvents(threadId: string): Promise<PersistedEvent[]> {
-    const principal = currentPrincipal();
+  async loadEvents(principal: Principal, threadId: string): Promise<PersistedEvent[]> {
     const runs = await this.pool.query<{
       run_id: string;
       status: string;
@@ -847,11 +923,11 @@ export class ThreadRepository {
                 'index', p.part_index, 'type', p.part_type, 'content', p.content,
                 'status', p.status, 'toolCallId', p.tool_call_id
               ) ORDER BY p.part_index)
-              FROM agent_core.agent_message_parts p
+              FROM thread_platform.message_parts p
               WHERE p.thread_id = m.thread_id AND p.message_id = m.id), '[]'::jsonb) AS parts
-       FROM agent_core.agent_runs r
-       JOIN agent_core.agent_threads t ON t.id = r.thread_id
-       LEFT JOIN agent_core.agent_messages m ON m.run_id = r.id
+       FROM thread_platform.runs r
+       JOIN thread_platform.threads t ON t.id = r.thread_id
+       LEFT JOIN thread_platform.messages m ON m.run_id = r.id
        WHERE r.thread_id = $1 AND t.namespace = $2 AND t.tenant_id = $3 AND t.owner_id = $4
          AND t.deleted_at IS NULL AND r.status NOT IN ('queued', 'running')
        ORDER BY r.created_at, m.sequence`,
@@ -860,9 +936,9 @@ export class ThreadRepository {
     const replay: PersistedEvent[] = [];
     const snapshots = await this.pool.query<{ run_id: string; payload: BaseEvent }>(
       `SELECT DISTINCT ON (s.snapshot_key) s.run_id, s.payload
-       FROM agent_core.agent_run_snapshots s
-       JOIN agent_core.agent_runs r ON r.id = s.run_id
-       JOIN agent_core.agent_threads t ON t.id = s.thread_id
+       FROM thread_platform.run_snapshots s
+       JOIN thread_platform.runs r ON r.id = s.run_id
+       JOIN thread_platform.threads t ON t.id = s.thread_id
        WHERE s.thread_id = $1 AND t.namespace = $2 AND t.tenant_id = $3 AND t.owner_id = $4
          AND r.status NOT IN ('queued', 'running') AND s.event_type <> 'MESSAGES_SNAPSHOT'
        ORDER BY s.snapshot_key, s.updated_at DESC`,
@@ -947,9 +1023,9 @@ export class ThreadRepository {
 
     const active = await this.pool.query<{ run_id: string; sequence: string; payload: BaseEvent }>(
       `SELECT e.run_id, e.sequence, e.payload
-       FROM agent_core.agent_run_events e
-       JOIN agent_core.agent_runs r ON r.id = e.run_id
-       JOIN agent_core.agent_threads t ON t.id = e.thread_id
+       FROM thread_platform.run_events e
+       JOIN thread_platform.runs r ON r.id = e.run_id
+       JOIN thread_platform.threads t ON t.id = e.thread_id
        WHERE e.thread_id = $1 AND t.namespace = $2 AND t.tenant_id = $3 AND t.owner_id = $4
          AND t.deleted_at IS NULL AND r.status IN ('queued', 'running')
          AND NOT (
@@ -959,18 +1035,17 @@ export class ThreadRepository {
        ORDER BY r.created_at, e.sequence`,
       [threadId, this.namespace, principal.tenantId, principal.userId],
     );
-    if (!runs.rows.length && !active.rows.length && !await this.getThread(threadId)) throw new Error("THREAD_NOT_FOUND");
+    if (!runs.rows.length && !active.rows.length && !await this.getThread(principal, threadId)) throw new Error("THREAD_NOT_FOUND");
     return replay.concat(active.rows.map((row) => ({
       key: `${row.run_id}:${row.sequence}`,
       event: row.payload,
     })));
   }
 
-  async isRunning(threadId: string): Promise<boolean> {
-    const principal = currentPrincipal();
+  async isRunning(principal: Principal, threadId: string): Promise<boolean> {
     const result = await this.pool.query(
-      `SELECT 1 FROM agent_core.agent_runs r
-       JOIN agent_core.agent_threads t ON t.id = r.thread_id
+      `SELECT 1 FROM thread_platform.runs r
+       JOIN thread_platform.threads t ON t.id = r.thread_id
        WHERE r.thread_id = $1 AND t.namespace = $2 AND t.tenant_id = $3 AND t.owner_id = $4
          AND r.status IN ('queued', 'running')
        LIMIT 1`,
@@ -979,12 +1054,11 @@ export class ThreadRepository {
     return Boolean(result.rowCount);
   }
 
-  async cancelActiveRun(threadId: string): Promise<void> {
-    const principal = currentPrincipal();
+  async cancelActiveRun(principal: Principal, threadId: string): Promise<void> {
     await this.pool.query(
-      `UPDATE agent_core.agent_runs r
+      `UPDATE thread_platform.runs r
        SET status = 'cancelled', finished_at = now()
-       FROM agent_core.agent_threads t
+       FROM thread_platform.threads t
        WHERE r.thread_id = $1 AND r.thread_id = t.id AND t.namespace = $2
          AND t.tenant_id = $3 AND t.owner_id = $4
          AND r.status IN ('queued', 'running')`,
@@ -992,44 +1066,59 @@ export class ThreadRepository {
     );
   }
 
+  async heartbeatRun(run: RunRecord): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE thread_platform.runs r SET heartbeat_at = now()
+       FROM thread_platform.threads t
+       WHERE r.id = $1 AND r.thread_id = t.id AND r.fencing_token = $2
+         AND t.active_fencing_token = $2 AND r.status IN ('queued', 'running')`,
+      [run.id, run.fencingToken],
+    );
+    return Boolean(result.rowCount);
+  }
+
   async listStaleRuns(staleAfterSeconds: number): Promise<Array<{ id: string; threadId: string }>> {
     const result = await this.pool.query<{ id: string; thread_id: string }>(
       `SELECT r.id, r.thread_id
-       FROM agent_core.agent_runs r
-       JOIN agent_core.agent_threads t ON t.id = r.thread_id
+       FROM thread_platform.runs r
+       JOIN thread_platform.threads t ON t.id = r.thread_id
        WHERE t.namespace = $1 AND r.status IN ('queued', 'running')
-         AND COALESCE(r.started_at, r.created_at) < now() - make_interval(secs => $2)`,
+         AND COALESCE(r.heartbeat_at, r.started_at, r.created_at)
+             < now() - make_interval(secs => $2)`,
       [this.namespace, staleAfterSeconds],
     );
     return result.rows.map((row) => ({ id: row.id, threadId: row.thread_id }));
   }
 
-  async interruptStaleRun(runId: string): Promise<void> {
+  async interruptStaleRun(runId: string, staleAfterSeconds: number): Promise<boolean> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      await client.query(
-        `UPDATE agent_core.agent_runs
+      const interrupted = await client.query(
+        `UPDATE thread_platform.runs
          SET status = 'interrupted', finished_at = now(), error_code = 'POD_LOST',
              error_detail = 'Run reconciled after its distributed lock expired'
-         WHERE id = $1 AND status IN ('queued', 'running')`,
-        [runId],
+         WHERE id = $1 AND status IN ('queued', 'running')
+           AND COALESCE(heartbeat_at, started_at, created_at)
+               < now() - make_interval(secs => $2)`,
+        [runId, staleAfterSeconds],
       );
-      await client.query(
-        `UPDATE agent_core.agent_messages
+      if (interrupted.rowCount) await client.query(
+        `UPDATE thread_platform.messages
          SET status = 'failed', updated_at = now()
          WHERE run_id = $1 AND status = 'streaming'`,
         [runId],
       );
-      await client.query(
-        `UPDATE agent_core.agent_message_parts p
+      if (interrupted.rowCount) await client.query(
+        `UPDATE thread_platform.message_parts p
          SET status = 'failed', updated_at = now()
-         FROM agent_core.agent_messages m
+         FROM thread_platform.messages m
          WHERE m.run_id = $1 AND p.thread_id = m.thread_id AND p.message_id = m.id
            AND p.status = 'streaming'`,
         [runId],
       );
       await client.query("COMMIT");
+      return Boolean(interrupted.rowCount);
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
@@ -1038,8 +1127,7 @@ export class ThreadRepository {
     }
   }
 
-  async listMessages(threadId: string, limit: number, afterSequence = 0): Promise<unknown[]> {
-    const principal = currentPrincipal();
+  async listMessages(principal: Principal, threadId: string, limit: number, afterSequence = 0): Promise<unknown[]> {
     const result = await this.pool.query(
       `SELECT m.id, m.run_id AS "runId", m.sequence, m.role, m.kind, m.content,
               m.status, m.tool_call_id AS "toolCallId", m.parent_message_id AS "parentMessageId",
@@ -1049,11 +1137,11 @@ export class ThreadRepository {
                   'index', p.part_index, 'type', p.part_type, 'content', p.content,
                   'status', p.status, 'toolCallId', p.tool_call_id
                 ) ORDER BY p.part_index)
-                FROM agent_core.agent_message_parts p
+                FROM thread_platform.message_parts p
                 WHERE p.thread_id = m.thread_id AND p.message_id = m.id
               ), '[]'::jsonb) AS parts
-       FROM agent_core.agent_messages m
-       JOIN agent_core.agent_threads t ON t.id = m.thread_id
+       FROM thread_platform.messages m
+       JOIN thread_platform.threads t ON t.id = m.thread_id
        WHERE m.thread_id = $1 AND t.namespace = $2 AND t.tenant_id = $3 AND t.owner_id = $4
          AND t.deleted_at IS NULL AND m.sequence > $5
        ORDER BY m.sequence LIMIT $6`,
@@ -1066,13 +1154,13 @@ export class ThreadRepository {
   }
 
   async listThreadEvents(
+    principal: Principal,
     afterId: string,
     limit = 200,
-    principal = currentPrincipal(),
   ): Promise<ThreadEvent[]> {
     const result = await this.pool.query<ThreadEventRow>(
       `SELECT id::text, event_type, payload, created_at, tenant_id, owner_id
-       FROM agent_core.agent_thread_events
+       FROM thread_platform.thread_events
        WHERE tenant_id = $1 AND owner_id = $2 AND namespace = $3 AND id > $4::bigint
        ORDER BY id
        LIMIT $5`,
@@ -1088,8 +1176,8 @@ export class ThreadRepository {
 
   async pruneEvents(retentionDays: number): Promise<number> {
     const result = await this.pool.query(
-      `DELETE FROM agent_core.agent_run_events e
-       USING agent_core.agent_runs r, agent_core.agent_threads t
+      `DELETE FROM thread_platform.run_events e
+       USING thread_platform.runs r, thread_platform.threads t
        WHERE e.run_id = r.id AND r.thread_id = t.id AND t.namespace = $1
          AND r.finished_at < now() - make_interval(days => $2)
          AND r.status IN ('completed', 'failed', 'cancelled', 'interrupted')`,
@@ -1100,8 +1188,8 @@ export class ThreadRepository {
 
   async pruneTitleJobs(retentionDays: number): Promise<number> {
     const result = await this.pool.query(
-      `DELETE FROM agent_core.agent_title_jobs j
-       USING agent_core.agent_threads t
+      `DELETE FROM thread_platform.title_jobs j
+       USING thread_platform.threads t
        WHERE j.thread_id = t.id AND t.namespace = $1
          AND j.status IN ('completed', 'dead')
          AND j.updated_at < now() - make_interval(days => $2)`,
@@ -1112,7 +1200,7 @@ export class ThreadRepository {
 
   async pruneThreadEvents(retentionDays: number): Promise<number> {
     const result = await this.pool.query(
-      `DELETE FROM agent_core.agent_thread_events
+      `DELETE FROM thread_platform.thread_events
        WHERE namespace = $1 AND created_at < now() - make_interval(days => $2)`,
       [this.namespace, retentionDays],
     );
@@ -1124,12 +1212,12 @@ export class ThreadRepository {
     try {
       await client.query("BEGIN");
       const removed = await client.query<{ thread_id: string }>(
-        `DELETE FROM agent_core.agent_messages m
-         USING agent_core.agent_threads t
+        `DELETE FROM thread_platform.messages m
+         USING thread_platform.threads t
          WHERE m.thread_id = t.id AND t.namespace = $1
            AND m.created_at < now() - make_interval(days => $2)
            AND NOT EXISTS (
-             SELECT 1 FROM agent_core.agent_runs r
+             SELECT 1 FROM thread_platform.runs r
              WHERE r.id = m.run_id AND r.status IN ('queued', 'running')
            )
          RETURNING m.thread_id`,
@@ -1138,11 +1226,11 @@ export class ThreadRepository {
       const threadIds = [...new Set(removed.rows.map((row) => row.thread_id))];
       if (threadIds.length) {
         await client.query(
-          `UPDATE agent_core.agent_threads t SET
-             message_count = (SELECT COUNT(*)::integer FROM agent_core.agent_messages m WHERE m.thread_id = t.id),
+          `UPDATE thread_platform.threads t SET
+             message_count = (SELECT COUNT(*)::integer FROM thread_platform.messages m WHERE m.thread_id = t.id),
              last_message_preview = (
                SELECT LEFT(m.content #>> '{}', 240)
-               FROM agent_core.agent_messages m
+               FROM thread_platform.messages m
                WHERE m.thread_id = t.id AND m.kind = 'text'
                ORDER BY m.sequence DESC LIMIT 1
              ),
@@ -1163,13 +1251,13 @@ export class ThreadRepository {
 
   async pruneRuns(retentionDays: number): Promise<number> {
     const result = await this.pool.query(
-      `DELETE FROM agent_core.agent_runs r
-       USING agent_core.agent_threads t
+      `DELETE FROM thread_platform.runs r
+       USING thread_platform.threads t
        WHERE r.thread_id = t.id AND t.namespace = $1
          AND r.finished_at < now() - make_interval(days => $2)
          AND r.status IN ('completed', 'failed', 'cancelled', 'interrupted')
-         AND NOT EXISTS (SELECT 1 FROM agent_core.agent_messages m WHERE m.run_id = r.id)
-         AND NOT EXISTS (SELECT 1 FROM agent_core.agent_run_events e WHERE e.run_id = r.id)`,
+         AND NOT EXISTS (SELECT 1 FROM thread_platform.messages m WHERE m.run_id = r.id)
+         AND NOT EXISTS (SELECT 1 FROM thread_platform.run_events e WHERE e.run_id = r.id)`,
       [this.namespace, retentionDays],
     );
     return result.rowCount ?? 0;
@@ -1181,11 +1269,11 @@ export class ThreadRepository {
       await client.query("BEGIN");
       const candidates = await client.query<{ id: string }>(
         `SELECT t.id
-         FROM agent_core.agent_threads t
+         FROM thread_platform.threads t
          WHERE t.namespace = $1 AND t.status = 'deleted'
            AND t.deleted_at <= now() - make_interval(days => $2)
            AND NOT EXISTS (
-             SELECT 1 FROM agent_core.agent_runs r
+             SELECT 1 FROM thread_platform.runs r
              WHERE r.thread_id = t.id AND r.status IN ('queued', 'running')
            )
          ORDER BY t.deleted_at, t.id
@@ -1212,7 +1300,7 @@ export class ThreadRepository {
       }
 
       const removed = await client.query(
-        `DELETE FROM agent_core.agent_threads
+        `DELETE FROM thread_platform.threads
          WHERE namespace = $1 AND id = ANY($2::uuid[]) AND status = 'deleted'`,
         [this.namespace, ids],
       );
@@ -1235,16 +1323,16 @@ export class ThreadRepository {
       oldest_title_job_seconds: string;
     }>(
       `SELECT
-         (SELECT COUNT(*) FROM agent_core.agent_runs r
-          JOIN agent_core.agent_threads t ON t.id = r.thread_id
+         (SELECT COUNT(*) FROM thread_platform.runs r
+          JOIN thread_platform.threads t ON t.id = r.thread_id
           WHERE t.namespace = $1 AND r.status IN ('queued', 'running')) AS active_runs,
          COUNT(*) FILTER (WHERE j.status = 'pending') AS title_pending,
          COUNT(*) FILTER (WHERE j.status = 'running') AS title_running,
          COUNT(*) FILTER (WHERE j.status = 'dead') AS title_dead,
          COALESCE(MAX(EXTRACT(EPOCH FROM now() - j.created_at))
            FILTER (WHERE j.status IN ('pending', 'running')), 0) AS oldest_title_job_seconds
-       FROM agent_core.agent_title_jobs j
-       JOIN agent_core.agent_threads t ON t.id = j.thread_id
+       FROM thread_platform.title_jobs j
+       JOIN thread_platform.threads t ON t.id = j.thread_id
        WHERE t.namespace = $1`,
       [this.namespace],
     );

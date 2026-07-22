@@ -11,8 +11,10 @@ RUN pnpm install --filter @kiri_ikki/example-nextjs... --frozen-lockfile=false
 FROM deps AS build
 ARG NEXT_PUBLIC_RUNTIME_URL=http://localhost:4000/api/copilotkit
 ARG NEXT_PUBLIC_THREAD_API_URL=http://localhost:4000
+ARG NEXT_PUBLIC_AGENT_ID=default
 ENV NEXT_PUBLIC_RUNTIME_URL=$NEXT_PUBLIC_RUNTIME_URL
 ENV NEXT_PUBLIC_THREAD_API_URL=$NEXT_PUBLIC_THREAD_API_URL
+ENV NEXT_PUBLIC_AGENT_ID=$NEXT_PUBLIC_AGENT_ID
 COPY packages/contracts packages/contracts
 COPY packages/thread-client packages/thread-client
 COPY packages/thread-react packages/thread-react

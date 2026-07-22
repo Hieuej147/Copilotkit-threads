@@ -27,7 +27,7 @@ function headers(body = false): Headers {
 }
 
 async function request(path: string, init: RequestInit = {}): Promise<unknown> {
-  const response = await fetch(`${baseUrl}/v3/admin${path}`, { ...init, headers: init.headers ?? headers(Boolean(init.body)) });
+  const response = await fetch(`${baseUrl}/v4/admin${path}`, { ...init, headers: init.headers ?? headers(Boolean(init.body)) });
   const value = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(`${response.status} ${JSON.stringify(value)}`);
   return value;

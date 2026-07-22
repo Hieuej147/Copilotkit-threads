@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { NextFunction, Request, Response } from "express";
+import { timingSafeEqual } from "node:crypto";
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
 import type { RuntimeConfig } from "./config.js";
 
@@ -28,6 +29,13 @@ function roles(value: unknown): string[] {
   return items.map(String).map((item) => item.trim()).filter((item) => identityPattern.test(item));
 }
 
+function gatewayIsTrusted(request: Request, config: RuntimeConfig): boolean {
+  const supplied = request.header(config.AUTH_GATEWAY_SECRET_HEADER) ?? "";
+  const expected = config.AUTH_GATEWAY_SECRET;
+  if (!supplied || supplied.length !== expected.length) return false;
+  return timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
+}
+
 export function createPrincipalMiddleware(config: RuntimeConfig) {
   const jwks = config.AUTH_MODE === "jwt"
     ? createRemoteJWKSet(new URL(config.JWT_JWKS_URL!))
@@ -39,8 +47,9 @@ export function createPrincipalMiddleware(config: RuntimeConfig) {
       if (config.AUTH_MODE === "development") {
         principal = { tenantId: config.DEV_TENANT_ID, userId: config.DEV_USER_ID, roles: [] };
       } else if (config.AUTH_MODE === "gateway") {
-        const tenantId = verifiedHeader(request, config.AUTH_TENANT_HEADER);
-        const userId = verifiedHeader(request, config.AUTH_USER_HEADER);
+        const trusted = gatewayIsTrusted(request, config);
+        const tenantId = trusted ? verifiedHeader(request, config.AUTH_TENANT_HEADER) : undefined;
+        const userId = trusted ? verifiedHeader(request, config.AUTH_USER_HEADER) : undefined;
         if (tenantId && userId) {
           principal = {
             tenantId,
@@ -69,10 +78,18 @@ export function createPrincipalMiddleware(config: RuntimeConfig) {
         }
       }
       if (!principal) {
-        response.status(401).json({ error: "AUTH_PRINCIPAL_REQUIRED" });
+        response.status(401).json({ error: {
+          code: "AUTH_PRINCIPAL_REQUIRED",
+          message: "Authenticated principal is required",
+          requestId: String(response.getHeader("X-Request-Id") ?? "unknown"),
+        } });
         return;
       }
       principalStorage.run(principal, next);
-    })().catch(() => response.status(401).json({ error: "AUTH_TOKEN_INVALID" }));
+    })().catch(() => response.status(401).json({ error: {
+      code: "AUTH_TOKEN_INVALID",
+      message: "Authentication token is invalid",
+      requestId: String(response.getHeader("X-Request-Id") ?? "unknown"),
+    } }));
   };
 }

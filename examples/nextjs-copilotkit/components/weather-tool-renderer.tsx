@@ -3,6 +3,7 @@
 import { useRenderTool } from "@copilotkit/react-core/v2";
 import { CloudSun, Droplets, MapPin, Thermometer, Wind } from "lucide-react";
 import { z } from "zod";
+import { agentId } from "../lib/config";
 
 const weatherParameters = z.object({ location: z.string() });
 
@@ -28,7 +29,7 @@ function parseResult(result: string): WeatherResult | null {
 export function WeatherToolRenderer() {
   useRenderTool({
     name: "get_weather",
-    agentId: "default",
+    agentId,
     parameters: weatherParameters,
     render: ({ status, parameters, result }) => {
       const weather = status === "complete" ? parseResult(result) : null;

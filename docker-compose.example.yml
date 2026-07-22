@@ -36,6 +36,7 @@ services:
       args:
         NEXT_PUBLIC_RUNTIME_URL: http://localhost:${RUNTIME_PORT:-4000}/api/copilotkit
         NEXT_PUBLIC_THREAD_API_URL: http://localhost:${RUNTIME_PORT:-4000}
+        NEXT_PUBLIC_AGENT_ID: ${AGENT_ID:-default}
     ports: ["${WEB_PORT:-3000}:3000"]
     depends_on:
       runtime: { condition: service_healthy }

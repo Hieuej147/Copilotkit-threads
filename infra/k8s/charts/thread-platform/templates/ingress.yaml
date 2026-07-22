@@ -22,7 +22,7 @@ spec:
             pathType: Prefix
             backend:
               service: { name: {{ include "thread-platform.fullname" . }}-runtime, port: { name: http } }
-          - path: /v3
+          - path: /v4
             pathType: Prefix
             backend:
               service: { name: {{ include "thread-platform.fullname" . }}-runtime, port: { name: http } }

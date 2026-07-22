@@ -52,7 +52,7 @@ export class PostgresAgentRegistry implements AgentRegistry {
 
   async get(agentId: string): Promise<AgentDefinition | null> {
     const result = await this.pool.query<AgentRow>(
-      `SELECT ${returning} FROM agent_core.agent_definitions WHERE namespace = $1 AND agent_id = $2`,
+      `SELECT ${returning} FROM thread_platform.agents WHERE namespace = $1 AND agent_id = $2`,
       [this.namespace, agentId],
     );
     return result.rows[0] ? mapAgent(result.rows[0]) : null;
@@ -60,7 +60,7 @@ export class PostgresAgentRegistry implements AgentRegistry {
 
   async list(options: { enabledOnly?: boolean } = {}): Promise<AgentDefinition[]> {
     const result = await this.pool.query<AgentRow>(
-      `SELECT ${returning} FROM agent_core.agent_definitions
+      `SELECT ${returning} FROM thread_platform.agents
        WHERE namespace = $1 AND ($2::boolean = false OR enabled)
        ORDER BY agent_id`,
       [this.namespace, options.enabledOnly ?? false],
@@ -70,7 +70,7 @@ export class PostgresAgentRegistry implements AgentRegistry {
 
   async upsert(agentId: string, input: UpsertAgentDefinition): Promise<AgentDefinition> {
     const result = await this.pool.query<AgentRow>(
-      `INSERT INTO agent_core.agent_definitions
+      `INSERT INTO thread_platform.agents
          (id, namespace, agent_id, display_name, endpoint_url, health_url, credential_ref,
           enabled, timeout_ms, max_concurrent_runs, title_enabled, title_base_url,
           title_model, title_credential_ref)
@@ -83,7 +83,7 @@ export class PostgresAgentRegistry implements AgentRegistry {
          title_enabled = EXCLUDED.title_enabled, title_base_url = EXCLUDED.title_base_url,
          title_model = EXCLUDED.title_model, title_credential_ref = EXCLUDED.title_credential_ref,
          disabled_at = CASE WHEN EXCLUDED.enabled THEN NULL ELSE now() END,
-         updated_at = now(), version = agent_core.agent_definitions.version + 1
+         updated_at = now(), version = thread_platform.agents.version + 1
        RETURNING ${returning}`,
       [randomUUID(), this.namespace, agentId, input.displayName, input.endpointUrl,
         input.healthUrl ?? null, input.credentialRef, input.enabled, input.timeoutMs,
@@ -95,7 +95,7 @@ export class PostgresAgentRegistry implements AgentRegistry {
 
   async disable(agentId: string): Promise<AgentDefinition | null> {
     const result = await this.pool.query<AgentRow>(
-      `UPDATE agent_core.agent_definitions
+      `UPDATE thread_platform.agents
        SET enabled = false, disabled_at = now(), updated_at = now(), version = version + 1
        WHERE namespace = $1 AND agent_id = $2 RETURNING ${returning}`,
       [this.namespace, agentId],

@@ -14,10 +14,10 @@ server. Other agent frameworks can also work when they implement the
 [Agent Contract](docs/AGENT_CONTRACT.md); the Thread API itself does not import
 or execute LangChain or LangGraph code.
 
-Version 1 uses Thread API `/v3`, a PostgreSQL-backed dynamic agent registry,
+Version 2 uses Thread API `/v4`, a PostgreSQL-backed dynamic agent registry,
 canonical message parts and durable event batching. Thread API v2 is removed;
 see
-[`docs/V3_MIGRATION.md`](docs/V3_MIGRATION.md).
+[`docs/V4_MIGRATION.md`](docs/V4_MIGRATION.md).
 
 > [!WARNING]
 > This is an AI-assisted, vibe-coded reference implementation, not a production

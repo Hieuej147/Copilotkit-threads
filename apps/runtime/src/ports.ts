@@ -18,30 +18,31 @@ export interface CredentialResolver {
 }
 
 export interface ThreadStore {
-  createThread(requestId: string, agentId?: string, metadata?: Record<string, unknown>): Promise<{
+  createThread(principal: Principal, idempotencyKey: string, agentId?: string, metadata?: Record<string, unknown>): Promise<{
     thread: ThreadRecord; event: PublishedThreadEvent | null; created: boolean;
   }>; 
-  getThread(threadId: string): Promise<ThreadRecord | null>;
-  listThreads(options: {
+  getThread(principal: Principal, threadId: string): Promise<ThreadRecord | null>;
+  listThreads(principal: Principal, options: {
     agentId?: string; status?: "active" | "archived"; limit: number; before?: { at: string; id: string };
   }): Promise<{ items: ThreadRecord[]; nextCursor: string | null; eventCursor: string }>;
-  setStatus(threadId: string, status: "active" | "archived" | "deleted"): Promise<{
+  setStatus(principal: Principal, threadId: string, status: "active" | "archived" | "deleted", expectedVersion: number): Promise<{
     thread: ThreadRecord; event: PublishedThreadEvent;
   } | null>;
-  renameThread(threadId: string, title: string): Promise<{
+  renameThread(principal: Principal, threadId: string, title: string, expectedVersion: number): Promise<{
     thread: ThreadRecord; event: PublishedThreadEvent;
   } | null>;
-  listMessages(threadId: string, limit: number, afterSequence?: number): Promise<unknown[]>;
-  listThreadEvents(afterId: string, limit?: number, principal?: Principal): Promise<import("@kiri_ikki/thread-contracts").ThreadEvent[]>;
+  listMessages(principal: Principal, threadId: string, limit: number, afterSequence?: number): Promise<unknown[]>;
+  listThreadEvents(principal: Principal, afterId: string, limit?: number): Promise<import("@kiri_ikki/thread-contracts").ThreadEvent[]>;
 }
 
 export interface RunStore {
-  beginRun(input: BeginRunInput): Promise<{ run: RunRecord; titleRequired: boolean }>;
+  beginRun(input: BeginRunInput): Promise<{ run: RunRecord; titleRequired: boolean; created: boolean }>;
   appendEvents(run: RunRecord, events: BaseEvent[]): Promise<PersistedEvent[]>;
-  finishRun(runId: string, status: "completed" | "failed" | "cancelled" | "interrupted", error?: Error): Promise<void>;
-  loadEvents(threadId: string): Promise<PersistedEvent[]>;
-  isRunning(threadId: string): Promise<boolean>;
-  cancelActiveRun(threadId: string): Promise<void>;
+  finishRun(run: RunRecord, status: "completed" | "failed" | "cancelled" | "interrupted", error?: Error): Promise<void>;
+  loadEvents(principal: Principal, threadId: string): Promise<PersistedEvent[]>;
+  isRunning(principal: Principal, threadId: string): Promise<boolean>;
+  cancelActiveRun(principal: Principal, threadId: string): Promise<void>;
+  heartbeatRun(run: RunRecord): Promise<boolean>;
 }
 
 export interface TitleStore {
@@ -54,7 +55,7 @@ export interface TitleStore {
 
 export interface MaintenanceStore {
   listStaleRuns(staleAfterSeconds: number): Promise<Array<{ id: string; threadId: string }>>;
-  interruptStaleRun(runId: string): Promise<void>;
+  interruptStaleRun(runId: string, staleAfterSeconds: number): Promise<boolean>;
   pruneEvents(retentionDays: number): Promise<number>;
   pruneTitleJobs(retentionDays: number): Promise<number>;
   pruneThreadEvents(retentionDays: number): Promise<number>;

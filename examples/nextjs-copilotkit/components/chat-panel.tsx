@@ -8,6 +8,7 @@ import {
 } from "@copilotkit/react-core/v2";
 import { memo, useEffect, useRef } from "react";
 import { HookLab } from "./hook-lab";
+import { agentId } from "../lib/config";
 
 const chatLabels = {
   chatInputPlaceholder: "Message the agent...",
@@ -23,7 +24,7 @@ function PendingMessageDispatcher({
   message: PendingChatMessage | null;
   onDispatched: (messageId: string) => void;
 }) {
-  const { agent } = useAgent({ agentId: "default" });
+  const { agent } = useAgent({ agentId });
   const { copilotkit } = useCopilotKit();
   const dispatchedRef = useRef<string | null>(null);
 
@@ -42,13 +43,15 @@ export const ChatPanel = memo(function ChatPanel({
   threadId,
   pendingMessage,
   onPendingMessageDispatched,
+  threadError,
 }: {
   threadId: string;
   pendingMessage: PendingChatMessage | null;
   onPendingMessageDispatched: (messageId: string) => void;
+  threadError: Error | null;
 }) {
   return (
-    <CopilotChatConfigurationProvider agentId="default" threadId={threadId}>
+    <CopilotChatConfigurationProvider agentId={agentId} threadId={threadId}>
       <main className="chat-shell">
         <PendingMessageDispatcher
           message={pendingMessage}
@@ -62,10 +65,11 @@ export const ChatPanel = memo(function ChatPanel({
           <div className="thread-id">{threadId.slice(0, 8)}</div>
         </header>
         <HookLab expectedThreadId={threadId} />
+        {threadError && <div className="run-error">{threadError.message}</div>}
         <div className="copilot-chat-host">
           <CopilotChat
             key={threadId}
-            agentId="default"
+            agentId={agentId}
             threadId={threadId}
             labels={chatLabels}
           />

@@ -10,6 +10,7 @@ function config(mode: "development" | "gateway") {
     REDIS_URL: "redis://localhost",
     AUTH_MODE: mode,
     AGENT_ALLOWED_HOSTS: mode === "development" ? "" : "agent.internal",
+    AUTH_GATEWAY_SECRET: mode === "gateway" ? "gateway-test-secret-with-32-characters" : "",
   });
 }
 
@@ -49,6 +50,7 @@ describe("principal middleware", () => {
     const response = {
       status(value: number) { status = value; return this; },
       json(value: unknown) { payload = value; return this; },
+      getHeader() { return "request-42"; },
     } as unknown as Response;
     createPrincipalMiddleware(config("gateway"))(
       { header: () => undefined } as unknown as Request,
@@ -57,13 +59,18 @@ describe("principal middleware", () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 10));
     assert.equal(status, 401);
-    assert.deepEqual(payload, { error: "AUTH_PRINCIPAL_REQUIRED" });
+    assert.deepEqual(payload, { error: {
+      code: "AUTH_PRINCIPAL_REQUIRED",
+      message: "Authenticated principal is required",
+      requestId: "request-42",
+    } });
   });
 
   it("publishes the gateway principal only inside request context", async () => {
     const headers: Record<string, string> = {
       "x-auth-tenant-id": "tenant-42",
       "x-auth-user-id": "user-7",
+      "x-thread-platform-gateway-secret": "gateway-test-secret-with-32-characters",
     };
     await invoke(createPrincipalMiddleware(config("gateway")),
       { header: (name: string) => headers[name] } as unknown as Request,

@@ -26,6 +26,7 @@ import {
   useState,
 } from "react";
 import { accentColors, type Accent, HookRegistrations } from "./hook-registrations";
+import { agentId } from "../lib/config";
 
 type SuggestionMode = "static" | "dynamic" | "off";
 
@@ -72,16 +73,16 @@ export const HookLab = memo(function HookLab({
   const [environment, setEnvironment] = useState("local");
   const [suggestionMode, setSuggestionMode] = useState<SuggestionMode>("static");
   const { agent } = useAgent({
-    agentId: "default",
+    agentId,
     updates: [UseAgentUpdate.OnMessagesChanged, UseAgentUpdate.OnRunStatusChanged],
     throttleMs: 150,
   });
-  const capabilities = useCapabilities("default");
+  const capabilities = useCapabilities(agentId);
   const chatConfiguration = useCopilotChatConfiguration();
   const { copilotkit, executingToolCallIds } = useCopilotKit();
   const renderToolCall = useRenderToolCall();
   const { suggestions, reloadSuggestions, clearSuggestions, isLoading } = useSuggestions({
-    agentId: "default",
+    agentId,
   });
 
   const appContext = useMemo(
@@ -102,8 +103,8 @@ export const HookLab = memo(function HookLab({
         minSuggestions: 1,
         maxSuggestions: 3,
         available: "always" as const,
-        providerAgentId: "default",
-        consumerAgentId: "default",
+        providerAgentId: agentId,
+        consumerAgentId: agentId,
       };
     }
     return {
@@ -113,7 +114,7 @@ export const HookLab = memo(function HookLab({
         { title: "Graph interrupt", message: "Buy a keyboard for 89 dollars." },
       ],
       available: "always" as const,
-      consumerAgentId: "default",
+      consumerAgentId: agentId,
     };
   }, [suggestionMode]);
   useConfigureSuggestions(suggestionConfig, [suggestionMode]);

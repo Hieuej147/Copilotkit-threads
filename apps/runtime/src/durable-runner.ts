@@ -12,15 +12,17 @@ import { randomUUID } from "node:crypto";
 import { currentPrincipal, type Principal } from "./auth.js";
 import type { RuntimeConfig } from "./config.js";
 import type { AgentRegistry, RunStore, ThreadStore } from "./ports.js";
+import { runCancelChannel, runEventChannel } from "./run-events.js";
+import type { RunRecord } from "./types.js";
 
 type ActiveRun = {
   subscription: Subscription | null;
   abort: () => void;
   token: string;
-  runId: string;
+  run: RunRecord;
   agentId: string;
   heartbeat: NodeJS.Timeout;
-  finalize: (status: "completed" | "failed" | "cancelled", error?: Error) => Promise<void>;
+  finalize: (status: "completed" | "failed" | "cancelled" | "interrupted", error?: Error) => Promise<void>;
 };
 
 function isInternalTitleMessageEvent(event: BaseEvent): boolean {
@@ -56,12 +58,19 @@ function textMessageId(event: BaseEvent): string | undefined {
   return typeof value.messageId === "string" ? value.messageId : undefined;
 }
 
-export function createEventNormalizer(): (event: BaseEvent) => BaseEvent | null {
+export type EventNormalizer = ((event: BaseEvent) => BaseEvent | null) & {
+  terminalStatus(): "completed" | "failed" | null;
+  terminalError(): Error | undefined;
+  validateComplete(): Error | null;
+};
+
+export function createEventNormalizer(): EventNormalizer {
   const started = new Set<string>();
   const completed = new Set<string>();
-  let runFinished = false;
-  return (event) => {
-    if (runFinished) return null;
+  let terminal: "completed" | "failed" | null = null;
+  let failure: Error | undefined;
+  const normalize = ((event: BaseEvent) => {
+    if (terminal) return null;
     const repaired = repairMessageId(event);
     if (isInternalTitleMessageEvent(repaired)) return null;
     const id = textMessageId(repaired);
@@ -75,9 +84,22 @@ export function createEventNormalizer(): (event: BaseEvent) => BaseEvent | null 
       started.delete(id);
       completed.add(id);
     }
-    if (repaired.type === "RUN_FINISHED" || repaired.type === "RUN_ERROR") runFinished = true;
+    if (repaired.type === "RUN_FINISHED") terminal = "completed";
+    if (repaired.type === "RUN_ERROR") {
+      terminal = "failed";
+      const message = (repaired as BaseEvent & { message?: unknown }).message;
+      failure = new Error(typeof message === "string" && message ? message : "Agent run failed");
+    }
     return repaired;
+  }) as EventNormalizer;
+  normalize.terminalStatus = () => terminal;
+  normalize.terminalError = () => failure;
+  normalize.validateComplete = () => {
+    if (started.size) return new Error("AGENT_PROTOCOL_ERROR");
+    if (!terminal) return new Error("AGENT_PROTOCOL_ERROR");
+    return null;
   };
+  return normalize;
 }
 
 export function createThreadEventNormalizer(): (key: string, event: BaseEvent) => BaseEvent | null {
@@ -105,12 +127,6 @@ function runErrorEvent(error: Error): BaseEvent {
   } as BaseEvent;
 }
 
-export function createBlockingStreamReader(redis: Redis): Redis {
-  // Blocking Redis commands monopolize their connection. Keep XREAD off the
-  // command connection used for locks, heartbeats, and event publication.
-  return redis.duplicate({ maxRetriesPerRequest: null });
-}
-
 export function isDurableFlushEvent(event: BaseEvent): boolean {
   return event.type === "TEXT_MESSAGE_END"
     || event.type === "TOOL_CALL_END"
@@ -122,6 +138,7 @@ export function isDurableFlushEvent(event: BaseEvent): boolean {
 
 export class DurableAgentRunner extends AgentRunner {
   private readonly activeRuns = new Map<string, ActiveRun>();
+  private readonly cancelSubscriber: Redis;
   private readonly counters = { eventBatches: 0, eventsPersisted: 0, batchFailures: 0, capacityRejected: 0 };
 
   constructor(
@@ -131,6 +148,28 @@ export class DurableAgentRunner extends AgentRunner {
     private readonly agentRegistry?: AgentRegistry,
   ) {
     super();
+    this.cancelSubscriber = redis.duplicate({ maxRetriesPerRequest: null });
+    this.cancelSubscriber.on("message", (_channel, threadId) => {
+      const active = this.activeRuns.get(threadId);
+      if (!active) return;
+      active.abort();
+      active.subscription?.unsubscribe();
+      void active.finalize("cancelled", new Error("RUN_CANCELLED"));
+    });
+    this.cancelSubscriber.on("error", (error) => {
+      console.warn(JSON.stringify({
+        level: "warn",
+        message: "run_cancel_subscriber_error",
+        error: String(error),
+      }));
+    });
+    void this.cancelSubscriber.subscribe(runCancelChannel(config.AGENT_NAMESPACE)).catch((error: unknown) => {
+      console.warn(JSON.stringify({
+        level: "warn",
+        message: "run_cancel_subscribe_failed",
+        error: String(error),
+      }));
+    });
   }
 
   private lockKey(threadId: string): string {
@@ -141,8 +180,8 @@ export class DurableAgentRunner extends AgentRunner {
     return `agent:${this.config.AGENT_NAMESPACE}:cancel:${threadId}`;
   }
 
-  private streamKey(threadId: string): string {
-    return `agent:${this.config.AGENT_NAMESPACE}:events:${threadId}`;
+  private fenceKey(threadId: string): string {
+    return `agent:${this.config.AGENT_NAMESPACE}:fence:${threadId}`;
   }
 
   private semaphoreKey(agentId: string): string {
@@ -226,15 +265,30 @@ export class DurableAgentRunner extends AgentRunner {
       }
 
       await this.redis.del(this.cancelKey(threadId));
+      const fencingToken = await this.redis.incr(this.fenceKey(threadId));
       const runId = request.input.runId || randomUUID();
       request.input.runId = runId;
-      const { run } = await this.repository.beginRun({
+      const { run, created } = await this.repository.beginRun({
+        principal,
         threadId,
         runId,
         agentId,
         messages: request.input.messages,
         rawInput: request.input,
+        fencingToken,
       });
+      if (!created) {
+        const replay = await this.repository.loadEvents(principal, threadId);
+        for (const item of replay) {
+          if (item.key.startsWith(`${run.id}:`)) subject.next(item.event);
+        }
+        await Promise.all([
+          this.releaseLock(threadId, token),
+          this.releaseAgentSlot(agentId, token),
+        ]);
+        subject.complete();
+        return;
+      }
       const input = {
         ...request.input,
         forwardedProps: {
@@ -265,16 +319,19 @@ export class DurableAgentRunner extends AgentRunner {
           const persisted = await this.repository.appendEvents(run, batch);
           this.counters.eventBatches += 1;
           this.counters.eventsPersisted += persisted.length;
-          const pipeline = this.redis.pipeline();
-          for (const item of persisted) {
-            pipeline.xadd(
-              this.streamKey(threadId), "*", "key", item.key, "event", JSON.stringify(item.event),
-            );
+          if (persisted.length) {
+            await this.redis.publish(
+              runEventChannel(this.config.AGENT_NAMESPACE, threadId),
+              persisted.at(-1)!.key,
+            ).catch((error: unknown) => {
+              console.warn(JSON.stringify({
+                level: "warn",
+                message: "run_event_wakeup_failed",
+                threadId,
+                error: String(error),
+              }));
+            });
           }
-          pipeline.expire(this.streamKey(threadId), this.config.REDIS_STREAM_TTL_SECONDS);
-          const redisResults = await pipeline.exec();
-          const redisFailure = redisResults?.find(([failure]) => failure)?.[0];
-          if (redisFailure) throw redisFailure;
           for (const item of persisted) subject.next(item.event);
           if (batch.some((item) => item.type === "RUN_FINISHED" || item.type === "RUN_ERROR")) {
             terminalEventPublished = true;
@@ -284,7 +341,7 @@ export class DurableAgentRunner extends AgentRunner {
       };
 
       const finalize = (
-        status: "completed" | "failed" | "cancelled",
+        status: "completed" | "failed" | "cancelled" | "interrupted",
         error?: Error,
       ): Promise<void> => {
         if (finalizePromise) return finalizePromise;
@@ -293,7 +350,7 @@ export class DurableAgentRunner extends AgentRunner {
           let terminalError = error;
           try {
             await flushEvents();
-            await this.repository.finishRun(runId, status, error);
+            await this.repository.finishRun(run, status, error);
             await Promise.all([
               this.releaseLock(threadId, token),
               this.releaseAgentSlot(agentId, token),
@@ -372,7 +429,7 @@ export class DurableAgentRunner extends AgentRunner {
         subscription: null,
         abort,
         token,
-        runId,
+        run,
         agentId,
         heartbeat,
         finalize,
@@ -390,7 +447,13 @@ export class DurableAgentRunner extends AgentRunner {
           void finalize("failed", normalized);
         },
         complete: () => {
-          void finalize("completed");
+          const protocolError = normalizeEvent.validateComplete();
+          if (protocolError) {
+            void finalize("failed", protocolError);
+            return;
+          }
+          const status = normalizeEvent.terminalStatus() === "failed" ? "failed" : "completed";
+          void finalize(status, normalizeEvent.terminalError());
         },
       });
       if (this.activeRuns.get(threadId)?.token === token) active.subscription = subscription;
@@ -410,98 +473,87 @@ export class DurableAgentRunner extends AgentRunner {
   }
 
   connect(request: AgentRunnerConnectRequest): Observable<BaseEvent> {
+    const principal = currentPrincipal();
     return new Observable<BaseEvent>((subscriber) => {
       let stopped = false;
-      const streamReader = createBlockingStreamReader(this.redis);
-      void (async () => {
-        if (!await this.repository.getThread(request.threadId)) throw new Error("THREAD_NOT_FOUND");
-        const streamKey = this.streamKey(request.threadId);
-        const boundary = await this.redis.xrevrange(streamKey, "+", "-", "COUNT", 1);
-        let redisCursor = boundary[0]?.[0] ?? "0-0";
-        const persisted = await this.repository.loadEvents(request.threadId);
-        const normalizeEvent = createThreadEventNormalizer();
-        const seen = new Set(persisted.map((item) => item.key));
-        const finishedRuns = new Set<string>();
-        for (const item of persisted) {
-          if (stopped) return;
-          const event = normalizeEvent(item.key, item.event);
-          if (!event) continue;
-          const runId = item.key.split(":", 1)[0] ?? item.key;
-          if (event.type === "RUN_FINISHED") finishedRuns.add(runId);
-          if (event.type === "CUSTOM" && finishedRuns.has(runId)) continue;
-          subscriber.next(event);
-        }
+      let completed = false;
+      const wakeups = this.redis.duplicate({ maxRetriesPerRequest: null });
+      const channel = runEventChannel(this.config.AGENT_NAMESPACE, request.threadId);
+      const seen = new Set<string>();
+      const normalizeEvent = createThreadEventNormalizer();
+      const finishedRuns = new Set<string>();
+      let pumpChain = Promise.resolve();
 
-        while (!stopped) {
-          const xread = streamReader.xread.bind(streamReader) as (...args: Array<string | number>) => Promise<
-            Array<[string, Array<[string, string[]]>]> | null
-          >;
-          const batches = await xread(
-            "BLOCK",
-            1_000,
-            "COUNT",
-            100,
-            "STREAMS",
-            streamKey,
-            redisCursor,
-          );
-          if (batches) {
-            for (const [, entries] of batches) {
-              for (const [id, fields] of entries) {
-                redisCursor = id;
-                const values = Object.fromEntries(
-                  Array.from({ length: fields.length / 2 }, (_, index) => [
-                    fields[index * 2]!,
-                    fields[index * 2 + 1]!,
-                  ]),
-                );
-                if (!values.key || !values.event || seen.has(values.key)) continue;
-                seen.add(values.key);
-                const event = normalizeEvent(values.key, JSON.parse(values.event) as BaseEvent);
-                if (!event) continue;
-                const runId = values.key.split(":", 1)[0] ?? values.key;
-                if (event.type === "RUN_FINISHED") finishedRuns.add(runId);
-                if (event.type === "CUSTOM" && finishedRuns.has(runId)) continue;
-                subscriber.next(event);
-              }
+      const pump = (): Promise<void> => {
+        pumpChain = pumpChain.then(async () => {
+          if (stopped || completed) return;
+          const persisted = await this.repository.loadEvents(principal, request.threadId);
+          for (const item of persisted) {
+            if (stopped || seen.has(item.key)) continue;
+            seen.add(item.key);
+            const event = normalizeEvent(item.key, item.event);
+            if (!event) continue;
+            const runId = item.key.split(":", 1)[0] ?? item.key;
+            if (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR") {
+              finishedRuns.add(runId);
             }
+            if (event.type === "CUSTOM" && finishedRuns.has(runId)) continue;
+            subscriber.next(event);
           }
-          if (!(await this.isRunning({ threadId: request.threadId }))) {
+          if (!(await this.repository.isRunning(principal, request.threadId))) {
+            completed = true;
             subscriber.complete();
-            return;
           }
-        }
+        });
+        return pumpChain;
+      };
+
+      void (async () => {
+        if (!await this.repository.getThread(principal, request.threadId)) throw new Error("THREAD_NOT_FOUND");
+        wakeups.on("message", () => void pump().catch((error) => subscriber.error(error)));
+        await wakeups.subscribe(channel);
+        await pump();
       })().catch((error: unknown) => {
         if (!stopped) subscriber.error(error);
       });
+      const catchUp = setInterval(() => {
+        void pump().catch((error: unknown) => {
+          if (!stopped) subscriber.error(error);
+        });
+      }, 2_000);
+      catchUp.unref();
       return () => {
         stopped = true;
-        streamReader.disconnect();
+        clearInterval(catchUp);
+        wakeups.disconnect();
       };
     });
   }
 
   async isRunning(request: AgentRunnerIsRunningRequest): Promise<boolean> {
-    if (!await this.repository.getThread(request.threadId)) throw new Error("THREAD_NOT_FOUND");
+    const principal = currentPrincipal();
+    if (!await this.repository.getThread(principal, request.threadId)) throw new Error("THREAD_NOT_FOUND");
     if (await this.redis.exists(this.lockKey(request.threadId))) return true;
-    return this.repository.isRunning(request.threadId);
+    return this.repository.isRunning(principal, request.threadId);
   }
 
   async stop(request: AgentRunnerStopRequest): Promise<boolean> {
-    if (!await this.repository.getThread(request.threadId)) throw new Error("THREAD_NOT_FOUND");
+    const principal = currentPrincipal();
+    if (!await this.repository.getThread(principal, request.threadId)) throw new Error("THREAD_NOT_FOUND");
     await this.redis.set(
       this.cancelKey(request.threadId),
       "1",
       "EX",
       this.config.THREAD_LOCK_TTL_SECONDS,
     );
+    await this.redis.publish(runCancelChannel(this.config.AGENT_NAMESPACE), request.threadId);
     const active = this.activeRuns.get(request.threadId);
     if (active) {
       active.abort();
       active.subscription?.unsubscribe();
       await active.finalize("cancelled", new Error("RUN_CANCELLED"));
     } else {
-      await this.repository.cancelActiveRun(request.threadId);
+      await this.repository.cancelActiveRun(principal, request.threadId);
     }
     return true;
   }
@@ -510,8 +562,9 @@ export class DurableAgentRunner extends AgentRunner {
     await Promise.all(Array.from(this.activeRuns.values()).map(async (active) => {
       active.abort();
       active.subscription?.unsubscribe();
-      await active.finalize("cancelled", new Error("RUNTIME_SHUTDOWN"));
+      await active.finalize("interrupted", new Error("RUNTIME_SHUTDOWN"));
     }));
+    this.cancelSubscriber.disconnect();
   }
 
   metrics(): Readonly<typeof this.counters> {
@@ -528,7 +581,7 @@ export class DurableAgentRunner extends AgentRunner {
       }
       return;
     }
-    await this.redis.eval(
+    const renewed = await this.redis.eval(
       `if redis.call('get', KEYS[1]) == ARGV[1] then
          return redis.call('expire', KEYS[1], ARGV[2])
        end
@@ -538,8 +591,10 @@ export class DurableAgentRunner extends AgentRunner {
       token,
       String(this.config.THREAD_LOCK_TTL_SECONDS),
     );
+    if (Number(renewed) !== 1) throw new Error("RUN_FENCE_LOST");
     const active = this.activeRuns.get(threadId);
     if (active?.token === token) {
+      if (!await this.repository.heartbeatRun(active.run)) throw new Error("RUN_FENCE_LOST");
       await this.redis.zadd(
         this.semaphoreKey(active.agentId),
         Date.now() + this.config.THREAD_LOCK_TTL_SECONDS * 1_000,

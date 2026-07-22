@@ -2,8 +2,8 @@ import "reflect-metadata";
 import cors from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { Redis } from "ioredis";
-import { CopilotRuntime } from "@copilotkit/runtime/v2";
-import { createCopilotExpressHandler } from "@copilotkit/runtime/v2/express";
+import { CopilotRuntime, createCopilotRuntimeHandler } from "@copilotkit/runtime/v2";
+import { createCopilotNodeHandler } from "@copilotkit/runtime/v2/node";
 import { LangGraphHttpAgent } from "@copilotkit/runtime/langgraph";
 import { ZodError } from "zod";
 import { randomUUID } from "node:crypto";
@@ -19,6 +19,7 @@ import { PostgresAgentRegistry, CachedAgentRegistry } from "./agent-registry.js"
 import { EnvironmentFileCredentialResolver } from "./credential-resolver.js";
 import { createAdminApi, registryInvalidationChannel } from "./admin-api.js";
 import { validateAgentUrl } from "./agent-policy.js";
+import { sendError } from "./http-error.js";
 
 const config = loadConfig();
 const pool = createPool(config.POSTGRES_URL, config.POSTGRES_POOL_MAX);
@@ -58,6 +59,11 @@ const runtime = new CopilotRuntime({
   },
   runner,
 });
+const copilotNodeHandler = createCopilotNodeHandler(createCopilotRuntimeHandler({
+  runtime,
+  mode: "multi-route",
+  cors: false,
+}));
 
 const registrySubscriber = redis.duplicate();
 registrySubscriber.on("message", () => registry.invalidate());
@@ -77,8 +83,6 @@ app.use((request, response, next) => {
   response.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   next();
 });
-app.use(express.json({ limit: "2mb" }));
-
 app.get("/live", (_request, response) => response.json({ status: "ok" }));
 
 app.get("/health", async (_request, response) => {
@@ -95,7 +99,7 @@ app.get("/health", async (_request, response) => {
 
 app.get("/ready", async (_request, response) => {
   const [schema, cache] = await Promise.all([
-    pool.query("SELECT 1 FROM agent_core.schema_migrations WHERE version = '006_platform_v3'")
+    pool.query("SELECT 1 FROM thread_platform.schema_migrations WHERE version = '001_thread_platform_v4'")
       .then((result) => result.rowCount ? "up" : "down", () => "down"),
     redis.ping().then(() => "up", () => "down"),
   ]);
@@ -140,31 +144,43 @@ app.get("/metrics", async (_request, response) => {
 
 app.use(createPrincipalMiddleware(config));
 app.use(createRateLimitMiddleware(redis, config.RATE_LIMIT_REQUESTS_PER_MINUTE));
-app.use("/v3", createThreadApi(repository, redis, config.AGENT_NAMESPACE));
-app.use("/v3/admin", createAdminApi({ registry, credentials, redis, config }));
-app.use(createCopilotExpressHandler({
-  runtime,
-  basePath: "/api/copilotkit",
-  mode: "multi-route",
-  cors: false,
-}));
+app.use("/api/copilotkit", async (request, response) => {
+  await copilotNodeHandler(request, response);
+});
+app.use(express.json({ limit: "2mb" }));
+app.use("/v4", createThreadApi(repository, redis, config.AGENT_NAMESPACE));
+app.use("/v4/admin", createAdminApi({ registry, credentials, redis, config }));
 
 app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
   if (error instanceof ZodError) {
-    response.status(400).json({ error: "VALIDATION_ERROR", details: error.issues });
+    sendError(response, 400, "VALIDATION_ERROR", "Request validation failed", error.issues);
     return;
   }
   const normalized = error instanceof Error ? error : new Error(String(error));
-  const status = normalized.message === "THREAD_NOT_FOUND" ? 404
-    : normalized.message === "THREAD_BUSY" ? 409
-      : normalized.message === "AGENT_NOT_CONFIGURED" ? 400
-        : normalized.message === "INVALID_CURSOR" ? 400
-      : normalized.message === "AUTH_CONTEXT_MISSING" ? 401
-        : normalized.message === "THREAD_AGENT_MISMATCH" ? 409
-          : normalized.message.includes("AGENT_HOST_NOT_ALLOWED") ? 400
-      : 500;
-  console.error(JSON.stringify({ level: "error", message: normalized.message, stack: normalized.stack }));
-  response.status(status).json({ error: normalized.message });
+  const knownErrors: Record<string, { status: number; code: string; message: string }> = {
+    THREAD_NOT_FOUND: { status: 404, code: "THREAD_NOT_FOUND", message: "Thread was not found" },
+    THREAD_BUSY: { status: 409, code: "THREAD_BUSY", message: "Thread already has an active run" },
+    THREAD_VERSION_REQUIRED: { status: 428, code: "THREAD_VERSION_REQUIRED", message: "If-Match is required" },
+    THREAD_VERSION_CONFLICT: { status: 412, code: "THREAD_VERSION_CONFLICT", message: "Thread version is stale" },
+    THREAD_AGENT_MISMATCH: { status: 409, code: "THREAD_AGENT_MISMATCH", message: "Thread belongs to a different agent" },
+    AGENT_NOT_CONFIGURED: { status: 400, code: "AGENT_NOT_CONFIGURED", message: "Agent is not configured" },
+    INVALID_CURSOR: { status: 400, code: "INVALID_CURSOR", message: "Pagination cursor is invalid" },
+    AUTH_CONTEXT_MISSING: { status: 401, code: "AUTH_PRINCIPAL_REQUIRED", message: "Authenticated principal is required" },
+  };
+  const known = knownErrors[normalized.message]
+    ?? (normalized.message.includes("AGENT_") && normalized.message.includes("NOT_ALLOWED")
+      ? { status: 400, code: "AGENT_CONFIGURATION_INVALID", message: "Agent endpoint is not allowed" }
+      : undefined);
+  const status = known?.status ?? 500;
+  if (status >= 500) {
+    console.error(JSON.stringify({ level: "error", message: normalized.message, stack: normalized.stack }));
+  }
+  sendError(
+    response,
+    status,
+    known?.code ?? "INTERNAL_ERROR",
+    known?.message ?? "Internal server error",
+  );
 });
 
 const server = app.listen(config.RUNTIME_PORT, () => {

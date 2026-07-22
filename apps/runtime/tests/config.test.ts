@@ -28,6 +28,15 @@ describe("runtime configuration", () => {
     );
   });
 
+  it("requires a strong shared secret for trusted gateway headers", () => {
+    assert.throws(() => loadConfig({
+      ...required,
+      AUTH_MODE: "gateway",
+      AGENT_ALLOWED_HOSTS: "agent.internal",
+      AUTH_GATEWAY_SECRET: "too-short",
+    }), /AUTH_GATEWAY_SECRET/);
+  });
+
   it("accepts an OpenAI-compatible title endpoint", () => {
     const config = loadConfig({
       ...required,

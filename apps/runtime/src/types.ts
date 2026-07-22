@@ -1,5 +1,6 @@
 import type { BaseEvent, Message, RunAgentInput } from "@ag-ui/client";
 import type { ThreadEvent, ThreadEventType } from "@kiri_ikki/thread-contracts";
+import type { Principal } from "./auth.js";
 
 export interface ThreadRecord {
   id: string;
@@ -22,6 +23,7 @@ export interface RunRecord {
   threadId: string;
   lastEventSeq: number;
   status: string;
+  fencingToken: number;
 }
 
 export interface PersistedEvent {
@@ -30,11 +32,13 @@ export interface PersistedEvent {
 }
 
 export interface BeginRunInput {
+  principal: Principal;
   threadId: string;
   runId: string;
   agentId: string;
   messages: Message[];
   rawInput: RunAgentInput;
+  fencingToken: number;
 }
 
 export type PublishedThreadEvent = {

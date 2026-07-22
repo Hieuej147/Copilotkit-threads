@@ -10,6 +10,7 @@ import { Check, Palette, UserRound, X } from "lucide-react";
 import { z } from "zod";
 import { PurchaseApprovalInterrupt } from "./purchase-approval-interrupt";
 import { WeatherToolRenderer } from "./weather-tool-renderer";
+import { agentId } from "../lib/config";
 
 export type Accent = "teal" | "coral" | "indigo";
 
@@ -63,7 +64,7 @@ export function HookRegistrations({
       name: "set_demo_accent",
       description: "Change the Hook Lab accent color. Use only when the user asks to change the demo accent.",
       parameters: accentParameters,
-      agentId: "default",
+      agentId,
       followUp: true,
       handler: async ({ accent }) => {
         setAccent(accent);
@@ -88,7 +89,7 @@ export function HookRegistrations({
       name: "show_demo_profile",
       description: "Display a demo user profile card when the user explicitly requests one.",
       parameters: profileParameters,
-      agentId: "default",
+      agentId,
       followUp: false,
       render: DemoProfileCard,
     },
@@ -100,7 +101,7 @@ export function HookRegistrations({
       name: "confirm_demo_export",
       description: "Ask for confirmation before a requested demo data export.",
       parameters: exportParameters,
-      agentId: "default",
+      agentId,
       followUp: true,
       render: ({ status, args, result, respond }) => (
         <section className="lab-hitl-card">

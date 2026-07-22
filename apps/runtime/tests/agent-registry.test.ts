@@ -55,6 +55,7 @@ describe("agent registry", () => {
       AUTH_MODE: "gateway",
       AGENT_URL: "http://legacy.internal/agent",
       AGENT_ALLOWED_HOSTS: "*.internal",
+      AUTH_GATEWAY_SECRET: "gateway-test-secret-with-32-characters",
     });
     assert.equal(validateAgentUrl("http://support.internal:8000/agent", config).hostname, "support.internal");
     assert.throws(() => validateAgentUrl("http://169.254.169.254/latest", config), /NOT_ALLOWED/);
@@ -65,6 +66,7 @@ describe("agent registry", () => {
       AUTH_MODE: "gateway",
       AGENT_URL: "http://legacy.internal/agent",
       AGENT_ALLOWED_HOSTS: "support.internal",
+      AUTH_GATEWAY_SECRET: "gateway-test-secret-with-32-characters",
     });
     assert.throws(() => validateAgentUrl("http://legacy.internal/agent", exactConfig), /NOT_ALLOWED/);
   });

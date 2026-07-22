@@ -2,7 +2,7 @@
 
 Thread Runtime accepts any agent that implements AG-UI over HTTP. The agent is
 responsible for graph state, tools, HITL interrupts and LangGraph checkpoints;
-it must not write `agent_core` tables.
+it must not write `thread_platform` tables.
 
 ## Required endpoints
 

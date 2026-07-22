@@ -61,6 +61,7 @@ services:
       CORS_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
       COPILOTKIT_TELEMETRY_DISABLED: ${COPILOTKIT_TELEMETRY_DISABLED:-true}
       AUTH_MODE: ${AUTH_MODE:-development}
+      AUTH_GATEWAY_SECRET: ${AUTH_GATEWAY_SECRET:-}
       TITLE_BASE_URL: ${TITLE_BASE_URL:-https://api.openai.com/v1}
       TITLE_API_KEY: ${TITLE_API_KEY:-${OPENAI_API_KEY:-}}
       TITLE_MODEL: ${TITLE_MODEL:-gpt-4.1-mini}

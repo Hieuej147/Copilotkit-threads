@@ -6,6 +6,7 @@ import { currentPrincipal } from "./auth.js";
 import { validateAgentUrl } from "./agent-policy.js";
 import type { RuntimeConfig } from "./config.js";
 import type { AgentRegistry, CredentialResolver } from "./ports.js";
+import { sendError } from "./http-error.js";
 
 const agentIdSchema = z.string().min(1).max(100).regex(/^[a-zA-Z0-9._-]+$/);
 
@@ -19,7 +20,7 @@ function requireAdmin(config: RuntimeConfig) {
     const allowed = principal.roles.includes(config.ADMIN_ROLE)
       || (config.AUTH_MODE === "development" && config.ADMIN_DEVELOPMENT_ENABLED);
     if (!allowed) {
-      response.status(403).json({ error: "ADMIN_ROLE_REQUIRED" });
+      sendError(response, 403, "ADMIN_ROLE_REQUIRED", "Administrator role is required");
       return;
     }
     next();
@@ -42,7 +43,7 @@ export function createAdminApi(options: {
 
   router.get("/agents/:agentId", async (request, response) => {
     const agent = await registry.get(agentIdSchema.parse(request.params.agentId));
-    if (!agent) return response.status(404).json({ error: "AGENT_NOT_FOUND" });
+    if (!agent) return sendError(response, 404, "AGENT_NOT_FOUND", "Agent was not found");
     return response.json(agentDefinitionSchema.parse(agent));
   });
 
@@ -60,14 +61,14 @@ export function createAdminApi(options: {
   router.post("/agents/:agentId/disable", async (request, response) => {
     const agentId = agentIdSchema.parse(request.params.agentId);
     const agent = await registry.disable(agentId);
-    if (!agent) return response.status(404).json({ error: "AGENT_NOT_FOUND" });
+    if (!agent) return sendError(response, 404, "AGENT_NOT_FOUND", "Agent was not found");
     await redis.publish(registryInvalidationChannel(config.AGENT_NAMESPACE), agentId);
     return response.json(agentDefinitionSchema.parse(agent));
   });
 
   router.post("/agents/:agentId/test", async (request, response) => {
     const agent = await registry.get(agentIdSchema.parse(request.params.agentId));
-    if (!agent) return response.status(404).json({ error: "AGENT_NOT_FOUND" });
+    if (!agent) return sendError(response, 404, "AGENT_NOT_FOUND", "Agent was not found");
     const endpoint = validateAgentUrl(agent.healthUrl ?? new URL("/health", agent.endpointUrl).toString(), config);
     const secret = await credentials.resolve(agent.credentialRef);
     const startedAt = performance.now();

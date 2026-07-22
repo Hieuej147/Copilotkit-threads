@@ -82,6 +82,11 @@ await replace(
   `$1${version}$2`,
 );
 await replace(
+  "infra/k8s/charts/thread-platform/values-production.example.yaml",
+  /(thread-runtime, tag: ")[^"]+(")/,
+  `$1${version}$2`,
+);
+await replace(
   "docs/CONSUMER_QUICKSTART.md",
   /(copilotkit-threads-runtime:)[0-9]+\.[0-9]+\.[0-9]+/,
   `$1${version}`,

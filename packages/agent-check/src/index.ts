@@ -123,25 +123,25 @@ export async function checkRuntime(
   timeoutMs = 15_000,
 ): Promise<void> {
   const baseUrl = runtimeUrl.replace(/\/$/, "");
-  const apiBase = `${baseUrl}/v3`;
-  const requestId = randomUUID();
-  const headers = { "content-type": "application/json" };
+  const apiBase = `${baseUrl}/v4`;
+  const idempotencyKey = randomUUID();
+  const headers = { "content-type": "application/json", "idempotency-key": idempotencyKey };
   const create = await fetch(`${apiBase}/threads`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ requestId }),
+    body: JSON.stringify({}),
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (create.status !== 201 && create.status !== 200) {
     throw new Error(`Thread create failed with HTTP ${create.status}`);
   }
-  const thread = await create.json() as { id?: string };
+  const thread = await create.json() as { id?: string; version?: number };
   if (!thread.id) throw new Error("Thread create response did not include id");
 
   const idempotent = await fetch(`${apiBase}/threads`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ requestId }),
+    body: JSON.stringify({}),
     signal: AbortSignal.timeout(timeoutMs),
   });
   const duplicate = await idempotent.json() as { id?: string };
@@ -152,6 +152,7 @@ export async function checkRuntime(
 
   const remove = await fetch(`${apiBase}/threads/${thread.id}`, {
     method: "DELETE",
+    headers: { "if-match": `"${thread.version}"` },
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (remove.status !== 204) throw new Error(`Thread cleanup failed with HTTP ${remove.status}`);

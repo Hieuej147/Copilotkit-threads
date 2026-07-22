@@ -1,5 +1,6 @@
 import {
   agentDefinitionSchema,
+  errorEnvelopeSchema,
   threadEventSchema,
   threadMessagePageSchema,
   threadPageSchema,
@@ -28,18 +29,26 @@ export type ListThreadsOptions = {
 
 export type CreateThreadOptions = {
   agentId?: string;
-  requestId?: string;
+  idempotencyKey?: string;
   metadata?: Record<string, unknown>;
 };
 
 export class ThreadApiError extends Error {
+  readonly code?: string;
+  readonly requestId?: string;
+  readonly details?: unknown;
+
   constructor(public readonly status: number, public readonly body: unknown) {
-    super(`Thread API request failed with status ${status}`);
+    const envelope = errorEnvelopeSchema.safeParse(body);
+    super(envelope.success ? envelope.data.error.message : `Thread API request failed with status ${status}`);
     this.name = "ThreadApiError";
+    this.code = envelope.success ? envelope.data.error.code : undefined;
+    this.requestId = envelope.success ? envelope.data.error.requestId : undefined;
+    this.details = envelope.success ? envelope.data.error.details : undefined;
   }
 }
 
-function requestId(): string {
+function newIdempotencyKey(): string {
   if (!globalThis.crypto?.randomUUID) throw new Error("crypto.randomUUID is required");
   return globalThis.crypto.randomUUID();
 }
@@ -54,13 +63,13 @@ export class ThreadClient {
   }
 
   create(options: CreateThreadOptions = {}): Promise<AgentThread> {
-    return this.request("/v3/threads", {
+    return this.request("/v4/threads", {
       method: "POST",
       body: JSON.stringify({
-        requestId: options.requestId ?? requestId(),
         agentId: options.agentId,
         metadata: options.metadata ?? {},
       }),
+      headers: { "idempotency-key": options.idempotencyKey ?? newIdempotencyKey() },
     }).then((value) => threadSchema.parse(value));
   }
 
@@ -70,11 +79,11 @@ export class ThreadClient {
     if (options.status) query.set("status", options.status);
     if (options.limit) query.set("limit", String(options.limit));
     if (options.cursor) query.set("cursor", options.cursor);
-    return threadPageSchema.parse(await this.request(`/v3/threads${query.size ? `?${query}` : ""}`));
+    return threadPageSchema.parse(await this.request(`/v4/threads${query.size ? `?${query}` : ""}`));
   }
 
   get(threadId: string): Promise<AgentThread> {
-    return this.request(`/v3/threads/${encodeURIComponent(threadId)}`).then((value) => threadSchema.parse(value));
+    return this.request(`/v4/threads/${encodeURIComponent(threadId)}`).then((value) => threadSchema.parse(value));
   }
 
   async messages(
@@ -85,27 +94,31 @@ export class ThreadClient {
     if (options.limit) query.set("limit", String(options.limit));
     if (options.after !== undefined) query.set("after", String(options.after));
     return threadMessagePageSchema.parse(await this.request(
-      `/v3/threads/${encodeURIComponent(threadId)}/messages${query.size ? `?${query}` : ""}`,
+      `/v4/threads/${encodeURIComponent(threadId)}/messages${query.size ? `?${query}` : ""}`,
     ));
   }
 
-  rename(threadId: string, title: string): Promise<AgentThread> {
-    return this.request(`/v3/threads/${encodeURIComponent(threadId)}`, {
+  rename(threadId: string, title: string, version: number): Promise<AgentThread> {
+    return this.request(`/v4/threads/${encodeURIComponent(threadId)}`, {
       method: "PATCH",
+      headers: { "if-match": `"${version}"` },
       body: JSON.stringify({ title }),
     }).then((value) => threadSchema.parse(value));
   }
 
-  archive(threadId: string): Promise<AgentThread> {
-    return this.setStatus(threadId, "archive");
+  archive(threadId: string, version: number): Promise<AgentThread> {
+    return this.setStatus(threadId, "archive", version);
   }
 
-  unarchive(threadId: string): Promise<AgentThread> {
-    return this.setStatus(threadId, "unarchive");
+  unarchive(threadId: string, version: number): Promise<AgentThread> {
+    return this.setStatus(threadId, "unarchive", version);
   }
 
-  async delete(threadId: string): Promise<void> {
-    await this.request(`/v3/threads/${encodeURIComponent(threadId)}`, { method: "DELETE" });
+  async delete(threadId: string, version: number): Promise<void> {
+    await this.request(`/v4/threads/${encodeURIComponent(threadId)}`, {
+      method: "DELETE",
+      headers: { "if-match": `"${version}"` },
+    });
   }
 
   subscribeToEvents(
@@ -120,7 +133,7 @@ export class ThreadClient {
         try {
           const headers = await this.headers();
           if (cursor !== "0") headers.set("last-event-id", cursor);
-          const response = await this.requestFetch(`${this.baseUrl}/v3/thread-events`, {
+          const response = await this.requestFetch(`${this.baseUrl}/v4/thread-events`, {
             headers,
             credentials: this.options.credentials,
             signal: controller.signal,
@@ -164,8 +177,11 @@ export class ThreadClient {
     return () => controller.abort();
   }
 
-  private setStatus(threadId: string, action: "archive" | "unarchive"): Promise<AgentThread> {
-    return this.request(`/v3/threads/${encodeURIComponent(threadId)}/${action}`, { method: "POST" })
+  private setStatus(threadId: string, action: "archive" | "unarchive", version: number): Promise<AgentThread> {
+    return this.request(`/v4/threads/${encodeURIComponent(threadId)}/${action}`, {
+      method: "POST",
+      headers: { "if-match": `"${version}"` },
+    })
       .then((value) => threadSchema.parse(value));
   }
 
@@ -205,28 +221,28 @@ export class AgentAdminClient {
   }
 
   async list(): Promise<AgentDefinition[]> {
-    const value = await this.request("/v3/admin/agents") as { items?: unknown };
+    const value = await this.request("/v4/admin/agents") as { items?: unknown };
     return agentDefinitionSchema.array().parse(value.items);
   }
 
   get(agentId: string): Promise<AgentDefinition> {
-    return this.request(`/v3/admin/agents/${encodeURIComponent(agentId)}`)
+    return this.request(`/v4/admin/agents/${encodeURIComponent(agentId)}`)
       .then((value) => agentDefinitionSchema.parse(value));
   }
 
   upsert(agentId: string, input: UpsertAgentDefinition): Promise<AgentDefinition> {
-    return this.request(`/v3/admin/agents/${encodeURIComponent(agentId)}`, {
+    return this.request(`/v4/admin/agents/${encodeURIComponent(agentId)}`, {
       method: "PUT", body: JSON.stringify(input),
     }).then((value) => agentDefinitionSchema.parse(value));
   }
 
   disable(agentId: string): Promise<AgentDefinition> {
-    return this.request(`/v3/admin/agents/${encodeURIComponent(agentId)}/disable`, { method: "POST" })
+    return this.request(`/v4/admin/agents/${encodeURIComponent(agentId)}/disable`, { method: "POST" })
       .then((value) => agentDefinitionSchema.parse(value));
   }
 
   test(agentId: string): Promise<{ ok: boolean; status: number; latencyMs: number }> {
-    return this.request(`/v3/admin/agents/${encodeURIComponent(agentId)}/test`, { method: "POST" })
+    return this.request(`/v4/admin/agents/${encodeURIComponent(agentId)}/test`, { method: "POST" })
       .then((value) => value as { ok: boolean; status: number; latencyMs: number });
   }
 

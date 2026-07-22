@@ -12,9 +12,9 @@ const migrationDirectory = resolve(currentDir, "../../../infra/postgres");
 const client = await pool.connect();
 
 try {
-  await client.query("SELECT pg_advisory_lock(hashtext('agent_core.schema_migrations'))");
-  await client.query("CREATE SCHEMA IF NOT EXISTS agent_core");
-  await client.query(`CREATE TABLE IF NOT EXISTS agent_core.schema_migrations (
+  await client.query("SELECT pg_advisory_lock(hashtext('thread_platform.schema_migrations'))");
+  await client.query("CREATE SCHEMA IF NOT EXISTS thread_platform");
+  await client.query(`CREATE TABLE IF NOT EXISTS thread_platform.schema_migrations (
     version text PRIMARY KEY,
     applied_at timestamptz NOT NULL DEFAULT now()
   )`);
@@ -24,23 +24,23 @@ try {
   for (const migration of migrations) {
     const version = migration.replace(/\.sql$/, "");
     const applied = await client.query(
-      "SELECT 1 FROM agent_core.schema_migrations WHERE version = $1",
+      "SELECT 1 FROM thread_platform.schema_migrations WHERE version = $1",
       [version],
     );
     if (applied.rowCount) {
-      console.log(`Skipped agent_core migration ${migration}`);
+      console.log(`Skipped thread_platform migration ${migration}`);
       continue;
     }
     const sql = await readFile(resolve(migrationDirectory, migration), "utf8");
     await client.query(sql);
     await client.query(
-      "INSERT INTO agent_core.schema_migrations(version) VALUES ($1) ON CONFLICT DO NOTHING",
+      "INSERT INTO thread_platform.schema_migrations(version) VALUES ($1) ON CONFLICT DO NOTHING",
       [version],
     );
-    console.log(`Applied agent_core migration ${migration}`);
+    console.log(`Applied thread_platform migration ${migration}`);
   }
   await client.query(
-    `INSERT INTO agent_core.agent_definitions
+    `INSERT INTO thread_platform.agents
        (id, namespace, agent_id, display_name, endpoint_url, health_url, enabled,
         timeout_ms, max_concurrent_runs, title_enabled, title_base_url, title_model,
         title_credential_ref)
@@ -53,7 +53,7 @@ try {
       config.TITLE_API_KEY ? "env:TITLE_API_KEY" : null],
   );
 } finally {
-  await client.query("SELECT pg_advisory_unlock(hashtext('agent_core.schema_migrations'))").catch(() => undefined);
+  await client.query("SELECT pg_advisory_unlock(hashtext('thread_platform.schema_migrations'))").catch(() => undefined);
   client.release();
   await pool.end();
 }

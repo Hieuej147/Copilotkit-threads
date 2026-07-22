@@ -2,6 +2,7 @@
 
 import { useInterrupt } from "@copilotkit/react-core/v2";
 import { Check, CreditCard, ShieldCheck, X } from "lucide-react";
+import { agentId } from "../lib/config";
 
 type PurchaseApproval = {
   kind: "purchase_approval";
@@ -30,7 +31,7 @@ function approvalFrom(value: unknown): PurchaseApproval | null {
 
 export function PurchaseApprovalInterrupt() {
   useInterrupt({
-    agentId: "default",
+    agentId,
     enabled: (event) => approvalFrom(event.value) !== null,
     render: ({ event, interrupt, resolve }) => {
       const approval = approvalFrom(event.value) ?? approvalFrom(interrupt?.metadata);

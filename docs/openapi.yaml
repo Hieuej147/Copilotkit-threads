@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: Thread Platform API
-  version: 3.0.0
+  version: 4.0.0
 servers:
-  - url: http://localhost:4000/v3
+  - url: http://localhost:4000/v4
 security:
   - bearerAuth: []
   - gatewayHeaders: []
@@ -11,15 +11,18 @@ paths:
   /threads:
     post:
       summary: Create an idempotent thread
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [requestId]
               properties:
-                requestId: { type: string, format: uuid }
                 agentId: { type: string }
                 metadata: { type: object, additionalProperties: true }
       responses:
@@ -54,6 +57,8 @@ paths:
         "404": { description: Not found or not owned by principal }
     patch:
       summary: Set a permanent manual title
+      parameters:
+        - { $ref: "#/components/parameters/IfMatch" }
       requestBody:
         required: true
         content:
@@ -66,6 +71,8 @@ paths:
         "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/Thread" } } } }
     delete:
       summary: Soft-delete a thread pending retention-based purge
+      parameters:
+        - { $ref: "#/components/parameters/IfMatch" }
       responses: { "204": { description: Hidden immediately; physically purged after configured retention } }
   /threads/{threadId}/messages:
     parameters:
@@ -88,12 +95,16 @@ paths:
   /threads/{threadId}/archive:
     post:
       summary: Archive a thread
-      parameters: [{ in: path, name: threadId, required: true, schema: { type: string, format: uuid } }]
+      parameters:
+        - { in: path, name: threadId, required: true, schema: { type: string, format: uuid } }
+        - { $ref: "#/components/parameters/IfMatch" }
       responses: { "200": { description: Archived } }
   /threads/{threadId}/unarchive:
     post:
       summary: Restore an archived thread
-      parameters: [{ in: path, name: threadId, required: true, schema: { type: string, format: uuid } }]
+      parameters:
+        - { in: path, name: threadId, required: true, schema: { type: string, format: uuid } }
+        - { $ref: "#/components/parameters/IfMatch" }
       responses: { "200": { description: Restored } }
   /thread-events:
     get:
@@ -139,6 +150,13 @@ paths:
       parameters: [{ in: path, name: agentId, required: true, schema: { type: string } }]
       responses: { "200": { description: Healthy }, "502": { description: Upstream unhealthy } }
 components:
+  parameters:
+    IfMatch:
+      in: header
+      name: If-Match
+      required: true
+      description: Current thread version, quoted or unquoted.
+      schema: { type: integer, minimum: 1 }
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
     gatewayHeaders:
@@ -146,6 +164,18 @@ components:
       in: header
       name: x-auth-user-id
   schemas:
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, requestId]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            requestId: { type: string }
+            details: {}
     Thread:
       type: object
       required: [id, namespace, agentId, title, titleStatus, status, messageCount, version, createdAt, updatedAt, lastActivityAt]
