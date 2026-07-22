@@ -1,6 +1,6 @@
 {
   "name": "@kiri_ikki/thread-contracts",
-  "version": "1.0.1",
+  "version": "2.0.0",
   "description": "Zod contracts for the self-hosted CopilotKit and LangGraph thread platform",
   "keywords": [
     "copilotkit",

@@ -1,5 +1,11 @@
 # @kiri_ikki/thread-runtime
 
+## 2.0.0
+
+### Major Changes
+
+- Synchronize the private Runtime deployment artifact with Thread Platform 2.0.0.
+
 ## 1.0.1
 
 ### Patch Changes
